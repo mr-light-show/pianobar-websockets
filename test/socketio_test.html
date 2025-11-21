@@ -84,12 +84,31 @@
         </div>
         
         <div class="controls">
-            <h3>Commands:</h3>
+            <h3>Query Commands:</h3>
             <button onclick="sendQuery()">Query State</button>
-            <button onclick="sendAction('p')">Play/Pause</button>
-            <button onclick="sendAction('n')">Next Song</button>
-            <button onclick="sendAction('+')">Love Song</button>
-            <button onclick="sendAction('v75')">Volume 75%</button>
+            <button onclick="sendQueryStations()">Query Stations</button>
+        </div>
+        
+        <div class="controls">
+            <h3>Playback Commands:</h3>
+            <button onclick="sendAction('playback.toggle')">Play/Pause</button>
+            <button onclick="sendAction('playback.next')">Next Song</button>
+            <button onclick="sendAction('playback.play')">Resume</button>
+            <button onclick="sendAction('playback.pause')">Pause</button>
+        </div>
+        
+        <div class="controls">
+            <h3>Song Commands:</h3>
+            <button onclick="sendAction('song.love')">❤️ Love Song</button>
+            <button onclick="sendAction('song.ban')">🚫 Ban Song</button>
+            <button onclick="sendAction('song.tired')">😴 Tired of Song</button>
+        </div>
+        
+        <div class="controls">
+            <h3>Volume Commands:</h3>
+            <button onclick="sendAction('volume.up')">🔊 Volume Up</button>
+            <button onclick="sendAction('volume.down')">🔉 Volume Down</button>
+            <button onclick="sendAction('volume.reset')">↩️ Reset Volume</button>
         </div>
         
         <div id="nowPlaying" style="display: none; background: #e3f2fd; padding: 15px; margin: 10px 0; border-radius: 5px;">
@@ -200,6 +219,10 @@
         
         function sendQuery() {
             sendMessage('2["query"]');
+        }
+        
+        function sendQueryStations() {
+            sendMessage('2["query.stations"]');
         }
         
         function sendAction(action) {

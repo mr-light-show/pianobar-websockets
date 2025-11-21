@@ -29,6 +29,74 @@ THE SOFTWARE.
 #include <stdio.h>
 #include <json-c/json.h>
 
+/* Command mapping: descriptive → single-letter */
+typedef struct {
+	const char *descriptive;
+	const char *singleLetter;
+} BarCommandMapping_t;
+
+static const BarCommandMapping_t commandMappings[] = {
+	/* Playback */
+	{"playback.next", "n"},
+	{"playback.toggle", "p"},
+	{"playback.play", "P"},
+	{"playback.pause", "S"},
+	
+	/* Volume */
+	{"volume.up", ")"},
+	{"volume.down", "("},
+	{"volume.reset", "^"},
+	
+	/* Song */
+	{"song.love", "+"},
+	{"song.ban", "-"},
+	{"song.tired", "t"},
+	{"song.bookmark", "b"},
+	{"song.explain", "e"},
+	{"song.info", "i"},
+	{"song.createStationFrom", "v"},
+	
+	/* Station */
+	{"station.change", "s"},
+	{"station.create", "c"},
+	{"station.delete", "d"},
+	{"station.rename", "r"},
+	{"station.addMusic", "a"},
+	{"station.addGenre", "g"},
+	{"station.addShared", "j"},
+	{"station.selectQuickMix", "x"},
+	{"station.manage", "="},
+	
+	/* Query */
+	{"query.history", "h"},
+	{"query.upcoming", "u"},
+	{"query.stations", "s"}, /* Special: handled differently */
+	
+	/* App */
+	{"app.quit", "q"},
+	{"app.settings", "!"},
+	
+	{NULL, NULL} /* terminator */
+};
+
+/* Translate descriptive command to single-letter command 
+ * Returns NULL if command not found (no backward compatibility) */
+static const char *BarSocketIoTranslateCommand(const char *command) {
+	if (!command) {
+		return NULL;
+	}
+	
+	/* Look up descriptive command in mapping table */
+	for (size_t i = 0; commandMappings[i].descriptive != NULL; i++) {
+		if (strcmp(command, commandMappings[i].descriptive) == 0) {
+			return commandMappings[i].singleLetter;
+		}
+	}
+	
+	/* Not found - reject single-letter and unknown commands */
+	return NULL;
+}
+
 /* Parse Socket.IO protocol message format */
 static BarSocketIoType_t BarSocketIoParse(const char *message, char **eventName, 
                                           json_object **data) {
@@ -114,7 +182,9 @@ void BarSocketIoHandleMessage(BarApp_t *app, const char *message) {
 				}
 			}
 		}
-	} else if (strcmp(eventName, "changeStation") == 0) {
+	} else if (strcmp(eventName, "station.change") == 0 || 
+	           strcmp(eventName, "changeStation") == 0) {
+		/* Support both new (station.change) and old (changeStation) names */
 		if (data && json_object_is_type(data, json_type_string)) {
 			const char *station = json_object_get_string(data);
 			BarSocketIoHandleChangeStation(app, station);
@@ -127,8 +197,14 @@ void BarSocketIoHandleMessage(BarApp_t *app, const char *message) {
 				}
 			}
 		}
-	} else if (strcmp(eventName, "query") == 0) {
+	} else if (strcmp(eventName, "query") == 0 || 
+	           strcmp(eventName, "query.state") == 0) {
+		/* query or query.state = full state */
 		BarSocketIoHandleQuery(app);
+	} else if (strcmp(eventName, "query.stations") == 0) {
+		/* query.stations = just stations list */
+		fprintf(stderr, "Socket.IO: Query stations received\n");
+		BarSocketIoEmitStations(app);
 	} else {
 		fprintf(stderr, "Socket.IO: Unknown event: %s\n", eventName);
 	}
@@ -358,40 +434,25 @@ static PianoStation_t *BarSocketIoFindStation(BarApp_t *app, const char *nameOrI
 
 /* Handle 'action' event from client */
 void BarSocketIoHandleAction(BarApp_t *app, const char *action) {
+	const char *translated;
+	
 	if (!app || !action) {
 		return;
 	}
 	
-	fprintf(stderr, "Socket.IO: Action received: %s\n", action);
+	/* Translate descriptive command to single-letter */
+	translated = BarSocketIoTranslateCommand(action);
 	
-	/* Map common actions to pianobar commands
-	 * For Phase 2.1, we log the action. Full integration with
-	 * pianobar's command system will be in Phase 4.
-	 * 
-	 * Common actions:
-	 * 'n' -> next song
-	 * 'p' -> play/pause
-	 * 'P' -> pause
-	 * 'S' -> play
-	 * '+' -> love song
-	 * '-' -> ban song
-	 * 't' -> tired of song
-	 * 'v75' -> set volume to 75%
-	 * 's' -> select station
-	 * 'q' -> quit
-	 */
-	
-	/* For now, handle volume changes as a demonstration */
-	if (action[0] == 'v' && strlen(action) > 1) {
-		int volume = atoi(action + 1);
-		if (volume >= 0 && volume <= 100) {
-			fprintf(stderr, "Socket.IO: Volume change to %d%% (would set player volume)\n", volume);
-			/* In Phase 4, we'll actually set: app->player.volume = volume */
-		}
+	if (!translated) {
+		fprintf(stderr, "Socket.IO: Unknown or unsupported action: %s\n", action);
+		fprintf(stderr, "Socket.IO: Use descriptive commands (e.g., playback.next, song.love)\n");
+		return;
 	}
 	
+	fprintf(stderr, "Socket.IO: Action '%s' → '%s'\n", action, translated);
+	
 	/* Queue action for main loop processing
-	 * In Phase 4, actions will be queued for processing by the main event loop */
+	 * In Phase 4, translated command will be queued for processing by the main event loop */
 }
 
 /* Handle 'changeStation' event from client */
