@@ -27,7 +27,7 @@ THE SOFTWARE.
 #include <sys/stat.h>
 #include <stdio.h>
 #include "../../src/main.h"
-#include "../../src/daemon.h"
+#include "../../src/websocket/daemon/daemon.h"
 
 /* Test: Write PID file with NULL app should fail */
 START_TEST(test_daemon_write_pid_null_app) {

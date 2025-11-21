@@ -25,7 +25,7 @@ THE SOFTWARE.
 #include <stdlib.h>
 #include <time.h>
 #include "../../src/main.h"
-#include "../../src/websocket.h"
+#include "../../src/websocket/core/websocket.h"
 
 /* Test: WebSocket initialization with NULL app should fail */
 START_TEST(test_websocket_init_null) {

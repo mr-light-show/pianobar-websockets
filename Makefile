@@ -36,12 +36,13 @@ PIANOBAR_SRC:=\
 
 # WebSocket support (conditional compilation)
 WEBSOCKET?=0
+WEBSOCKET_DIR:=src/websocket
 ifeq ($(WEBSOCKET),1)
 	PIANOBAR_SRC+=\
-		${PIANOBAR_DIR}/websocket.c \
-		${PIANOBAR_DIR}/http_server.c \
-		${PIANOBAR_DIR}/socketio.c \
-		${PIANOBAR_DIR}/daemon.c
+		${WEBSOCKET_DIR}/core/websocket.c \
+		${WEBSOCKET_DIR}/http/http_server.c \
+		${WEBSOCKET_DIR}/protocol/socketio.c \
+		${WEBSOCKET_DIR}/daemon/daemon.c
 endif
 
 PIANOBAR_OBJ:=${PIANOBAR_SRC:.c=.o}
@@ -199,9 +200,9 @@ TEST_OBJ:=${TEST_SRC:.c=.o}
 TEST_BIN:=pianobar_test
 
 # Build test suite (only link the modules being tested)
-${TEST_BIN}: ${TEST_OBJ} ${PIANOBAR_DIR}/websocket.o ${PIANOBAR_DIR}/http_server.o ${PIANOBAR_DIR}/socketio.o ${PIANOBAR_DIR}/daemon.o
+${TEST_BIN}: ${TEST_OBJ} ${WEBSOCKET_DIR}/core/websocket.o ${WEBSOCKET_DIR}/http/http_server.o ${WEBSOCKET_DIR}/protocol/socketio.o ${WEBSOCKET_DIR}/daemon/daemon.o
 	${SILENTECHO} "  LINK  $@"
-	${SILENTCMD}${CC} -o $@ ${TEST_OBJ} ${PIANOBAR_DIR}/websocket.o ${PIANOBAR_DIR}/http_server.o ${PIANOBAR_DIR}/socketio.o ${PIANOBAR_DIR}/daemon.o ${ALL_LDFLAGS} ${CHECK_LDFLAGS}
+	${SILENTCMD}${CC} -o $@ ${TEST_OBJ} ${WEBSOCKET_DIR}/core/websocket.o ${WEBSOCKET_DIR}/http/http_server.o ${WEBSOCKET_DIR}/protocol/socketio.o ${WEBSOCKET_DIR}/daemon/daemon.o ${ALL_LDFLAGS} ${CHECK_LDFLAGS}
 
 # Run tests
 test: ${TEST_BIN}

@@ -23,7 +23,7 @@ THE SOFTWARE.
 
 #include <check.h>
 #include <string.h>
-#include "../../src/http_server.h"
+#include "../../src/websocket/http/http_server.h"
 
 /* Test: HTML files should have text/html MIME type */
 START_TEST(test_mime_type_html) {
