@@ -77,6 +77,8 @@ ifeq ($(WEBSOCKET),1)
 	CFLAGS+=-DWEBSOCKET_ENABLED
 	LIBWEBSOCKETS_CFLAGS:=$(shell $(PKG_CONFIG) --cflags libwebsockets openssl)
 	LIBWEBSOCKETS_LDFLAGS:=$(shell $(PKG_CONFIG) --libs libwebsockets openssl)
+	CHECK_CFLAGS:=$(shell $(PKG_CONFIG) --cflags check)
+	CHECK_LDFLAGS:=$(shell $(PKG_CONFIG) --libs check)
 endif
 
 # combine all flags
@@ -128,6 +130,17 @@ libpiano.so.0: ${LIBPIANO_RELOBJ} ${LIBPIANO_OBJ}
 -include $(PIANOBAR_SRC:.c=.d)
 -include $(LIBPIANO_SRC:.c=.d)
 
+# Test-specific compilation rules (must come before general %.o: %.c rule)
+ifeq ($(WEBSOCKET),1)
+test/%.o: test/%.c
+	${SILENTECHO} "    CC  $< (test)"
+	${SILENTCMD}${CC} -c -o $@ ${ALL_CFLAGS} ${CHECK_CFLAGS} -MMD -MF $*.d -MP $<
+
+test/unit/%.o: test/unit/%.c
+	${SILENTECHO} "    CC  $< (test)"
+	${SILENTCMD}${CC} -c -o $@ ${ALL_CFLAGS} ${CHECK_CFLAGS} -MMD -MF $*.d -MP $<
+endif
+
 # build standard object files
 %.o: %.c
 	${SILENTECHO} "    CC  $<"
@@ -174,4 +187,100 @@ uninstall:
 	${DESTDIR}/${LIBDIR}/libpiano.a \
 	${DESTDIR}/${INCDIR}/piano.h
 
-.PHONY: install install-libpiano uninstall test debug all
+# Test suite (only available when WEBSOCKET=1)
+ifeq ($(WEBSOCKET),1)
+TEST_DIR:=test
+TEST_SRC:=\
+		${TEST_DIR}/test_main.c \
+		${TEST_DIR}/unit/test_websocket.c \
+		${TEST_DIR}/unit/test_http_server.c \
+		${TEST_DIR}/unit/test_daemon.c
+TEST_OBJ:=${TEST_SRC:.c=.o}
+TEST_BIN:=pianobar_test
+
+# Build test suite (only link the modules being tested)
+${TEST_BIN}: ${TEST_OBJ} ${PIANOBAR_DIR}/websocket.o ${PIANOBAR_DIR}/http_server.o ${PIANOBAR_DIR}/socketio.o ${PIANOBAR_DIR}/daemon.o
+	${SILENTECHO} "  LINK  $@"
+	${SILENTCMD}${CC} -o $@ ${TEST_OBJ} ${PIANOBAR_DIR}/websocket.o ${PIANOBAR_DIR}/http_server.o ${PIANOBAR_DIR}/socketio.o ${PIANOBAR_DIR}/daemon.o ${ALL_LDFLAGS} ${CHECK_LDFLAGS}
+
+# Run tests
+test: ${TEST_BIN}
+	${SILENTECHO} "   TEST  Running test suite..."
+	${SILENTCMD}./${TEST_BIN}
+
+# Run tests with memory leak detection using AddressSanitizer
+test-asan: clean-test-asan
+	${SILENTECHO} "   TEST  Building with AddressSanitizer..."
+	${SILENTCMD}${MAKE} ${TEST_BIN} CFLAGS="${CFLAGS} -fsanitize=address -fno-omit-frame-pointer -g" LDFLAGS="${LDFLAGS} -fsanitize=address"
+	${SILENTECHO} "   TEST  Running test suite with memory leak detection..."
+	${SILENTCMD}./${TEST_BIN}
+
+clean-test-asan:
+	${SILENTCMD}${RM} ${TEST_OBJ} ${TEST_BIN}
+
+# Run tests with valgrind (Linux only, optional)
+test-valgrind: ${TEST_BIN}
+	${SILENTECHO} "   TEST  Running test suite with valgrind..."
+	${SILENTCMD}valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --error-exitcode=1 ./${TEST_BIN}
+
+# Run static analysis (requires cppcheck)
+lint:
+	${SILENTECHO} "   LINT  Running static analysis..."
+	${SILENTCMD}cppcheck --enable=all --suppress=missingIncludeSystem --suppress=unusedFunction \
+		--inline-suppr --error-exitcode=1 \
+		-I ${LIBPIANO_INCLUDE} ${PIANOBAR_DIR}/*.c ${LIBPIANO_DIR}/*.c
+
+# Run linter on test files
+lint-test:
+	${SILENTECHO} "   LINT  Running static analysis on tests..."
+	${SILENTCMD}cppcheck --enable=all --suppress=missingIncludeSystem \
+		--inline-suppr --error-exitcode=1 \
+		-I ${LIBPIANO_INCLUDE} -I ${PIANOBAR_DIR} ${TEST_DIR}/**/*.c ${TEST_DIR}/*.c
+
+# Comprehensive test suite: unit tests + memory checks + linting
+test-all: test lint test-asan
+	${SILENTECHO} "   TEST  All tests passed!"
+
+# Clean test files
+test-clean:
+	${SILENTECHO} " CLEAN  tests"
+	${SILENTCMD}${RM} ${TEST_OBJ} ${TEST_BIN}
+else
+test:
+	@echo "Tests are only available with WEBSOCKET=1"
+	@echo "Run: make WEBSOCKET=1 test"
+	@exit 1
+
+test-asan:
+	@echo "Tests are only available with WEBSOCKET=1"
+	@echo "Run: make WEBSOCKET=1 test-asan"
+	@exit 1
+
+test-valgrind:
+	@echo "Tests are only available with WEBSOCKET=1"
+	@echo "Run: make WEBSOCKET=1 test-valgrind"
+	@exit 1
+
+test-all:
+	@echo "Tests are only available with WEBSOCKET=1"
+	@echo "Run: make WEBSOCKET=1 test-all"
+	@exit 1
+
+lint:
+	${SILENTECHO} "   LINT  Running static analysis..."
+	${SILENTCMD}cppcheck --enable=all --suppress=missingIncludeSystem --suppress=unusedFunction \
+		--inline-suppr --error-exitcode=1 \
+		-I ${LIBPIANO_INCLUDE} ${PIANOBAR_DIR}/*.c ${LIBPIANO_DIR}/*.c
+
+lint-test:
+	@echo "Tests are only available with WEBSOCKET=1"
+	@exit 1
+
+test-clean:
+	@true
+
+clean-test-asan:
+	@true
+endif
+
+.PHONY: install install-libpiano uninstall test test-asan test-valgrind test-all lint lint-test test-clean clean-test-asan debug all
