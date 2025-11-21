@@ -58,7 +58,7 @@ inline static void debugPrint(debugKind kind, const char * const format, ...) {
 	}
 }
 #else
-inline static bool debugEnable () { return false; }
+inline static bool debugEnable () {}
 #define debugPrint(...)
 #endif
 
