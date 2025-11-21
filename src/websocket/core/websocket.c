@@ -150,12 +150,9 @@ void BarWebsocketDestroy(BarApp_t *app) {
 	BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
 	
 	if (ctx->context) {
-		/* Force immediate close for better UX (no graceful handshake wait)
-		 * This makes 'q' quit instantly instead of waiting 5-10 seconds
-		 * TODO: When daemon mode is implemented, only cancel if NOT daemonized */
-		lws_cancel_service(ctx->context);
-		
-		/* Destroy context - returns immediately after cancel */
+		/* Destroy context - this may take a moment for graceful shutdown
+		 * Note: lws_cancel_service() was tried but caused deadlock in single-threaded model
+		 * TODO: Consider using a destroy timeout or non-blocking approach */
 		lws_context_destroy(ctx->context);
 		ctx->context = NULL;
 	}
