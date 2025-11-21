@@ -229,8 +229,8 @@ void BarWebsocketBroadcastSongStart(BarApp_t *app) {
 		ctx->progress.songDuration = app->player.songDuration;
 	}
 	
-	/* Broadcast to all clients */
-	BarWebsocketBroadcastState(app);
+	/* Broadcast start event via Socket.IO */
+	BarSocketIoEmitStart(app);
 }
 
 /* Broadcast song stop event */
@@ -243,8 +243,8 @@ void BarWebsocketBroadcastSongStop(BarApp_t *app) {
 	
 	ctx->progress.isPlaying = false;
 	
-	/* Broadcast to all clients */
-	BarWebsocketBroadcastState(app);
+	/* Broadcast stop event via Socket.IO */
+	BarSocketIoEmitStop(app);
 }
 
 /* Broadcast volume change */
@@ -253,8 +253,8 @@ void BarWebsocketBroadcastVolume(BarApp_t *app, int volume) {
 		return;
 	}
 	
-	/* Broadcast to all clients */
-	BarWebsocketBroadcastState(app);
+	/* Broadcast volume event via Socket.IO */
+	BarSocketIoEmitVolume(app, volume);
 }
 
 /* Broadcast progress update */
@@ -269,17 +269,19 @@ void BarWebsocketBroadcastProgress(BarApp_t *app) {
 		return;
 	}
 	
+	/* Calculate elapsed time */
 	time_t now = time(NULL);
+	time_t elapsed = now - ctx->progress.songStartTime;
 	
-	/* Only broadcast every 1-2 seconds */
-	if (now - ctx->progress.lastBroadcast < 1) {
+	/* Only broadcast every second to avoid spam */
+	if (elapsed == ctx->progress.lastBroadcast) {
 		return;
 	}
 	
-	ctx->progress.lastBroadcast = now;
+	ctx->progress.lastBroadcast = elapsed;
 	
-	/* Broadcast to all clients */
-	BarWebsocketBroadcastState(app);
+	/* Broadcast progress via Socket.IO */
+	BarSocketIoEmitProgress(app, (unsigned int)elapsed, ctx->progress.songDuration);
 }
 
 /* Broadcast message to all connected WebSocket clients */

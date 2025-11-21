@@ -92,6 +92,17 @@
             <button onclick="sendAction('v75')">Volume 75%</button>
         </div>
         
+        <div id="nowPlaying" style="display: none; background: #e3f2fd; padding: 15px; margin: 10px 0; border-radius: 5px;">
+            <h3 style="margin: 0 0 10px 0;">Now Playing</h3>
+            <div id="songInfo" style="font-size: 16px; margin-bottom: 10px;">
+                <strong id="songTitle">-</strong> by <span id="songArtist">-</span>
+            </div>
+            <div id="progressBar" style="background: #ddd; height: 20px; border-radius: 10px; overflow: hidden;">
+                <div id="progressFill" style="background: #4CAF50; height: 100%; width: 0%; transition: width 0.3s;"></div>
+            </div>
+            <div id="progressText" style="margin-top: 5px; font-size: 12px; color: #666;">0:00 / 0:00</div>
+        </div>
+        
         <h3>Output:</h3>
         <div id="output"></div>
         <button onclick="clearOutput()">Clear Output</button>
@@ -137,6 +148,20 @@
                 
                 ws.onmessage = function(event) {
                     log('Received: ' + event.data, 'received');
+                    
+                    // Parse and handle Socket.IO events
+                    try {
+                        if (event.data.startsWith('2[')) {
+                            const json = event.data.substring(1); // Remove '2' packet type
+                            const arr = JSON.parse(json);
+                            const eventName = arr[0];
+                            const data = arr[1];
+                            
+                            handleSocketEvent(eventName, data);
+                        }
+                    } catch (e) {
+                        log('Parse error: ' + e.message);
+                    }
                 };
                 
                 ws.onerror = function(error) {
@@ -183,6 +208,55 @@
         
         function clearOutput() {
             document.getElementById('output').innerHTML = '';
+        }
+        
+        function handleSocketEvent(eventName, data) {
+            const nowPlaying = document.getElementById('nowPlaying');
+            
+            if (eventName === 'start') {
+                // Show now playing section
+                nowPlaying.style.display = 'block';
+                
+                // Update song info
+                document.getElementById('songTitle').textContent = data.title || '-';
+                document.getElementById('songArtist').textContent = data.artist || '-';
+                
+                log('▶ Now Playing: ' + data.artist + ' - ' + data.title, 'received');
+                
+            } else if (eventName === 'stop') {
+                // Hide now playing section
+                nowPlaying.style.display = 'none';
+                log('⏹ Playback stopped', 'received');
+                
+            } else if (eventName === 'progress') {
+                // Update progress bar
+                const percentage = data.percentage || 0;
+                document.getElementById('progressFill').style.width = percentage + '%';
+                
+                // Update time display
+                const elapsed = formatTime(data.elapsed || 0);
+                const duration = formatTime(data.duration || 0);
+                document.getElementById('progressText').textContent = elapsed + ' / ' + duration;
+                
+                // Only log every 5 seconds to avoid spam
+                if (data.elapsed % 5 === 0) {
+                    log('⏱ Progress: ' + elapsed + ' / ' + duration + ' (' + 
+                        percentage.toFixed(1) + '%)', 'received');
+                }
+                
+            } else if (eventName === 'stations') {
+                log('📻 Received ' + (data ? data.length : 0) + ' stations', 'received');
+                
+            } else if (eventName === 'process') {
+                log('📊 State: playing=' + data.playing + ', station=' + 
+                    (data.station || 'none'), 'received');
+            }
+        }
+        
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return mins + ':' + (secs < 10 ? '0' : '') + secs;
         }
         
         // Log initial state

@@ -272,6 +272,13 @@ static void BarMainStartPlayback (BarApp_t *app, pthread_t *playerThread) {
 				app->curStation, curSong, &app->player, app->ph.stations,
 				PIANO_RET_OK, CURLE_OK);
 
+		#ifdef WEBSOCKET_ENABLED
+		/* Broadcast to WebSocket clients */
+		if (app->settings.websocketEnabled) {
+			BarWebsocketBroadcastSongStart(app);
+		}
+		#endif
+
 		/* prevent race condition, mode must _not_ be DEAD if
 		 * thread has been started */
 		app->player.mode = PLAYER_WAITING;
@@ -289,6 +296,13 @@ static void BarMainPlayerCleanup (BarApp_t *app, pthread_t *playerThread) {
 	BarUiStartEventCmd (&app->settings, "songfinish", app->curStation,
 			app->playlist, &app->player, app->ph.stations, PIANO_RET_OK,
 			CURLE_OK);
+
+	#ifdef WEBSOCKET_ENABLED
+	/* Broadcast to WebSocket clients */
+	if (app->settings.websocketEnabled) {
+		BarWebsocketBroadcastSongStop(app);
+	}
+	#endif
 
 	/* FIXME: pthread_join blocks everything if network connection
 	 * is hung up e.g. */
@@ -406,6 +420,11 @@ static void BarMainLoop (BarApp_t *app) {
 		/* Service WebSocket connections */
 		if (app->settings.websocketEnabled) {
 			BarWebsocketService(app, 10); /* 10ms timeout */
+			
+			/* Broadcast progress updates while playing */
+			if (BarPlayerGetMode (player) == PLAYER_PLAYING) {
+				BarWebsocketBroadcastProgress(app);
+			}
 		}
 		#endif
 
