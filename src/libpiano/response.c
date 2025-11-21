@@ -613,18 +613,18 @@ PianoReturn_t PianoResponse (PianoHandle_t *ph, PianoRequest_t *req) {
 				}
 			}
 
-			/* parse feedback */
-			json_object *feedback;
-			if (json_object_object_get_ex (result, "feedback", &feedback)) {
-				static const char * const keys[] = {"thumbsUp", "thumbsDown"};
-				for (size_t i = 0; i < sizeof (keys)/sizeof (*keys); i++) {
-					json_object *val;
-					if (!json_object_object_get_ex (feedback, keys[i], &val)) {
-						continue;
-					}
-					assert (json_object_is_type (val, json_type_array));
-					for (unsigned int i = 0; i < json_object_array_length (val); i++) {
-						json_object *s = json_object_array_get_idx (val, i);
+		/* parse feedback */
+		json_object *feedback;
+		if (json_object_object_get_ex (result, "feedback", &feedback)) {
+			static const char * const keys[] = {"thumbsUp", "thumbsDown"};
+			for (size_t i = 0; i < sizeof (keys)/sizeof (*keys); i++) {
+				json_object *val;
+				if (!json_object_object_get_ex (feedback, keys[i], &val)) {
+					continue;
+				}
+				assert (json_object_is_type (val, json_type_array));
+				for (unsigned int j = 0; j < json_object_array_length (val); j++) {
+					json_object *s = json_object_array_get_idx (val, j);
 						PianoSong_t *feedbackSong;
 
 						feedbackSong = calloc (1, sizeof (*feedbackSong));
