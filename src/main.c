@@ -419,7 +419,7 @@ static void BarMainLoop (BarApp_t *app) {
 		#ifdef WEBSOCKET_ENABLED
 		/* Service WebSocket connections */
 		if (app->settings.websocketEnabled) {
-			BarWebsocketService(app, 10); /* 10ms timeout */
+			BarWebsocketService(app, 0); /* Non-blocking - returns immediately */
 			
 			/* Broadcast progress updates while playing */
 			if (BarPlayerGetMode (player) == PLAYER_PLAYING) {
