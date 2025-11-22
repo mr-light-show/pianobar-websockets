@@ -1,6 +1,5 @@
 /*
 Copyright (c) 2025
-    Kyle Hawes <khawes@netflix.com>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -48,6 +47,8 @@ static const MimeMapping_t mimeTypes[] = {
 	{ ".svg", "image/svg+xml" },
 	{ ".ico", "image/x-icon" },
 	{ ".txt", "text/plain" },
+	{ ".woff", "font/woff" },
+	{ ".woff2", "font/woff2" },
 	{ NULL, NULL }
 };
 
@@ -76,60 +77,119 @@ const char *BarHttpGetMimeType(const char *path) {
 	return "application/octet-stream";
 }
 
-/* Serve static file */
+/* Serve static file with manual HTTP response construction */
 int BarHttpServeFile(struct lws *wsi, const char *filepath) {
-	unsigned char buf[4096 + LWS_PRE];
-	unsigned char *p = &buf[LWS_PRE];
+	unsigned char buffer[LWS_PRE + 4096];
+	unsigned char *start = &buffer[LWS_PRE];
+	unsigned char *p = start;
+	unsigned char *end = &buffer[sizeof(buffer) - 1];
 	FILE *fp;
-	size_t n;
-	int m;
-	const char *mimetype;
+	long filesize;
+	char lenstr[32];
+	int n;
 	
 	if (!wsi || !filepath) {
 		return -1;
 	}
 	
+	/* Open and validate file */
 	fp = fopen(filepath, "rb");
 	if (!fp) {
-		/* File not found */
 		lws_return_http_status(wsi, HTTP_STATUS_NOT_FOUND, NULL);
 		return -1;
 	}
 	
 	/* Get file size */
 	fseek(fp, 0, SEEK_END);
-	long filesize = ftell(fp);
+	filesize = ftell(fp);
 	fseek(fp, 0, SEEK_SET);
 	
-	/* Get MIME type */
-	mimetype = BarHttpGetMimeType(filepath);
-	
-	/* Send HTTP headers */
-	if (lws_add_http_common_headers(wsi, HTTP_STATUS_OK,
-	                                 mimetype, filesize,
-	                                 &p, &buf[sizeof(buf)]) < 0) {
+	/* Build HTTP response headers */
+	if (lws_add_http_header_status(wsi, HTTP_STATUS_OK, &p, end)) {
 		fclose(fp);
 		return -1;
 	}
 	
-	if (lws_finalize_write_http_header(wsi, buf + LWS_PRE,
-	                                    &p, &buf[sizeof(buf)]) < 0) {
+	/* Content-Type */
+	const char *mime = BarHttpGetMimeType(filepath);
+	if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_TYPE,
+	                                  (unsigned char *)mime, strlen(mime), &p, end)) {
 		fclose(fp);
 		return -1;
 	}
 	
-	/* Send file content */
-	while ((n = fread(p, 1, sizeof(buf) - LWS_PRE, fp)) > 0) {
-		m = lws_write(wsi, p, n, LWS_WRITE_HTTP);
-		if (m < 0) {
-			fclose(fp);
-			return -1;
+	/* Content-Length */
+	snprintf(lenstr, sizeof(lenstr), "%ld", filesize);
+	if (lws_add_http_header_by_token(wsi, WSI_TOKEN_HTTP_CONTENT_LENGTH,
+	                                  (unsigned char *)lenstr, strlen(lenstr), &p, end)) {
+		fclose(fp);
+		return -1;
+	}
+	
+	/* Content-Security-Policy - Allow Google Fonts */
+	const char *csp = "default-src 'self'; "
+	                  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+	                  "font-src 'self' https://fonts.gstatic.com data:; "
+	                  "connect-src 'self' ws: wss:; "
+	                  "img-src 'self' http: https: data:; "
+	                  "frame-ancestors 'none'; "
+	                  "base-uri 'none'; "
+	                  "form-action 'self';";
+	if (lws_add_http_header_by_name(wsi, (unsigned char *)"content-security-policy:",
+	                                 (unsigned char *)csp, strlen(csp), &p, end)) {
+		fclose(fp);
+		return -1;
+	}
+	
+	/* Additional Security Headers */
+	if (lws_add_http_header_by_name(wsi, (unsigned char *)"referrer-policy:",
+	                                 (unsigned char *)"no-referrer", 11, &p, end)) {
+		fclose(fp);
+		return -1;
+	}
+	if (lws_add_http_header_by_name(wsi, (unsigned char *)"x-content-type-options:",
+	                                 (unsigned char *)"nosniff", 7, &p, end)) {
+		fclose(fp);
+		return -1;
+	}
+	if (lws_add_http_header_by_name(wsi, (unsigned char *)"x-frame-options:",
+	                                 (unsigned char *)"deny", 4, &p, end)) {
+		fclose(fp);
+		return -1;
+	}
+	if (lws_add_http_header_by_name(wsi, (unsigned char *)"x-xss-protection:",
+	                                 (unsigned char *)"1; mode=block", 13, &p, end)) {
+		fclose(fp);
+		return -1;
+	}
+	
+	/* Finalize headers */
+	if (lws_finalize_http_header(wsi, &p, end)) {
+		fclose(fp);
+		return -1;
+	}
+	
+	/* Send headers */
+	n = lws_write(wsi, start, p - start, LWS_WRITE_HTTP_HEADERS);
+	if (n < 0) {
+		fclose(fp);
+		return -1;
+	}
+	
+	/* Stream file content */
+	while (!feof(fp)) {
+		n = fread(start, 1, sizeof(buffer) - LWS_PRE, fp);
+		if (n > 0) {
+			if (lws_write(wsi, start, n, LWS_WRITE_HTTP) < 0) {
+				fclose(fp);
+				return -1;
+			}
 		}
 	}
 	
 	fclose(fp);
 	
-	/* Close connection */
+	/* Complete HTTP transaction */
 	if (lws_http_transaction_completed(wsi)) {
 		return -1;
 	}

@@ -1,6 +1,5 @@
 /*
 Copyright (c) 2025
-    Kyle Hawes <khawes@netflix.com>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,6 +21,7 @@ THE SOFTWARE.
 */
 
 #include "../../main.h"
+#include "../../debug.h"
 #include "websocket.h"
 #include "../protocol/socketio.h"
 #include "../http/http_server.h"
@@ -34,21 +34,47 @@ THE SOFTWARE.
 
 /* Forward declarations */
 static void BarWebsocketBroadcast(const char *message, size_t len);
+static void BarWebsocketProcessBroadcast(BarWsContext_t *ctx, BarWsMessage_t *msg);
+static void* BarWebsocketThread(void *arg);
 
 /* WebSocket protocol callback */
 static int callback_websocket(struct lws *wsi, enum lws_callback_reasons reason,
                               void *user, void *in, size_t len) {
 	BarApp_t *app = (BarApp_t *)lws_context_user(lws_get_context(wsi));
+	char filepath[512];
+	const char *webui_path;
+	char *url;
 	
 	switch (reason) {
+		case LWS_CALLBACK_HTTP:
+			/* HTTP request received */
+			url = (char *)in;
+			
+			/* Get webui path from settings, default to ./dist/webui */
+			webui_path = app->settings.webuiPath;
+			if (!webui_path || strlen(webui_path) == 0) {
+				webui_path = "./dist/webui";
+			}
+			
+			debugPrint(DEBUG_WEBSOCKET, "HTTP: Request for %s\n", url);
+			
+			/* Handle root path */
+			if (strcmp(url, "/") == 0 || strlen(url) == 0) {
+				return BarHttpServeIndex(wsi, webui_path);
+			}
+			
+			/* Serve requested file */
+			snprintf(filepath, sizeof(filepath), "%s%s", webui_path, url);
+			return BarHttpServeFile(wsi, filepath);
+			
 		case LWS_CALLBACK_ESTABLISHED:
 			/* New client connected */
-			fprintf(stderr, "WebSocket: Client connected\n");
+			debugPrint(DEBUG_WEBSOCKET, "WebSocket: Client connected\n");
 			break;
 			
 		case LWS_CALLBACK_CLOSED:
 			/* Client disconnected */
-			fprintf(stderr, "WebSocket: Client disconnected\n");
+			debugPrint(DEBUG_WEBSOCKET, "WebSocket: Client disconnected\n");
 			break;
 			
 		case LWS_CALLBACK_RECEIVE:
@@ -94,6 +120,87 @@ static struct lws_protocols protocols[] = {
 	{ NULL, NULL, 0, 0, 0, NULL, 0 } /* terminator */
 };
 
+/* Process broadcast message from main thread (runs in WS thread) */
+static void BarWebsocketProcessBroadcast(BarWsContext_t *ctx, BarWsMessage_t *msg) {
+	if (!ctx || !msg) {
+		return;
+	}
+	
+	/* Note: We can't access BarApp_t here safely, so we'll need to redesign
+	 * broadcast messages to be self-contained or use a different approach */
+	
+	switch (msg->type) {
+		case MSG_TYPE_BROADCAST_START:
+			/* Song started */
+			ctx->progress.isPlaying = true;
+			/* TODO: Extract song data from msg->data and emit */
+			break;
+			
+		case MSG_TYPE_BROADCAST_STOP:
+			/* Song stopped */
+			ctx->progress.isPlaying = false;
+			/* TODO: Emit stop event */
+			break;
+			
+		case MSG_TYPE_BROADCAST_PROGRESS: {
+			/* Progress update - data contains elapsed time (unsigned int) */
+			if (msg->data && msg->dataLen >= sizeof(unsigned int) * 2) {
+				unsigned int *times = (unsigned int *)msg->data;
+				unsigned int elapsed = times[0];
+				unsigned int duration = times[1];
+				/* TODO: Emit progress event with elapsed and duration */
+			}
+			break;
+		}
+			
+		case MSG_TYPE_BROADCAST_VOLUME: {
+			/* Volume changed - data contains volume (int) */
+			if (msg->data && msg->dataLen >= sizeof(int)) {
+				int volume = *(int *)msg->data;
+				/* TODO: Emit volume event */
+			}
+			break;
+		}
+			
+		case MSG_TYPE_BROADCAST_STATIONS:
+			/* Station list changed */
+			/* TODO: Emit stations event */
+			break;
+			
+		default:
+			break;
+	}
+}
+
+/* WebSocket service thread - runs lws_service() loop */
+static void* BarWebsocketThread(void *arg) {
+	BarApp_t *app = (BarApp_t *)arg;
+	if (!app || !app->wsContext) {
+		return NULL;
+	}
+	
+	BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
+	
+	debugPrint(DEBUG_WEBSOCKET, "WebSocket: Thread started\n");
+	
+	while (ctx->threadRunning) {
+		/* Service WebSocket (can block - we're in our own thread) */
+		if (ctx->context) {
+			lws_service(ctx->context, 50); /* 50ms is fine here */
+		}
+		
+		/* Process broadcast queue from main thread */
+		BarWsMessage_t *msg;
+		while ((msg = BarWsQueuePop(&ctx->broadcastQueue, 0)) != NULL) {
+			BarWebsocketProcessBroadcast(ctx, msg);
+			BarWsMessageFree(msg);
+		}
+	}
+	
+	debugPrint(DEBUG_WEBSOCKET, "WebSocket: Thread stopped\n");
+	return NULL;
+}
+
 /* Initialize WebSocket server */
 bool BarWebsocketInit(BarApp_t *app) {
 	struct lws_context_creation_info info;
@@ -116,8 +223,9 @@ bool BarWebsocketInit(BarApp_t *app) {
 	info.port = app->settings.websocketPort;
 	info.protocols = protocols;
 	info.user = app;
-	info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT |
-	               LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE;
+	info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
+	/* Removed LWS_SERVER_OPTION_HTTP_HEADERS_SECURITY_BEST_PRACTICES_ENFORCE
+	 * so we can use custom CSP for Google Fonts */
 	
 	ctx->context = lws_create_context(&info);
 	if (!ctx->context) {
@@ -132,11 +240,36 @@ bool BarWebsocketInit(BarApp_t *app) {
 	ctx->maxConnections = 32;
 	ctx->connections = calloc(ctx->maxConnections, sizeof(BarWsConnection_t));
 	
+	/* Initialize queues */
+	BarWsQueueInit(&ctx->broadcastQueue, 100);
+	BarWsQueueInit(&ctx->commandQueue, 50);
+	
+	/* Initialize mutex */
+	pthread_mutex_init(&ctx->stateMutex, NULL);
+	
 	/* Set up Socket.IO broadcast callback */
 	BarSocketIoSetBroadcastCallback(BarWebsocketBroadcast);
 	
 	fprintf(stderr, "WebSocket: Server started on port %d\n",
 	        app->settings.websocketPort);
+	
+	/* Start WebSocket thread */
+	ctx->threadRunning = true;
+	if (pthread_create(&ctx->thread, NULL, BarWebsocketThread, app) != 0) {
+		fprintf(stderr, "WebSocket: Failed to create thread\n");
+		
+		/* Cleanup on failure */
+		BarWsQueueDestroy(&ctx->broadcastQueue);
+		BarWsQueueDestroy(&ctx->commandQueue);
+		pthread_mutex_destroy(&ctx->stateMutex);
+		lws_context_destroy(ctx->context);
+		free(ctx->connections);
+		free(ctx);
+		app->wsContext = NULL;
+		return false;
+	}
+	
+	fprintf(stderr, "WebSocket: Thread created successfully\n");
 	
 	return true;
 }
@@ -151,13 +284,33 @@ void BarWebsocketDestroy(BarApp_t *app) {
 	
 	BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
 	
+	/* Signal thread to stop */
+	ctx->threadRunning = false;
+	
+	/* Close queues to wake up any waiting operations */
+	BarWsQueueClose(&ctx->broadcastQueue);
+	BarWsQueueClose(&ctx->commandQueue);
+	
+	/* Cancel any ongoing lws_service() calls - safe in multi-threaded mode */
 	if (ctx->context) {
-		/* Destroy context - this may take a moment for graceful shutdown
-		 * Note: lws_cancel_service() was tried but caused deadlock in single-threaded model
-		 * TODO: Consider using a destroy timeout or non-blocking approach */
+		lws_cancel_service(ctx->context);
+	}
+	
+	/* Wait for thread to finish */
+	fprintf(stderr, "WebSocket: Waiting for thread to stop...\n");
+	pthread_join(ctx->thread, NULL);
+	fprintf(stderr, "WebSocket: Thread stopped\n");
+	
+	/* Now safe to cleanup (thread is dead) */
+	if (ctx->context) {
 		lws_context_destroy(ctx->context);
 		ctx->context = NULL;
 	}
+	
+	/* Cleanup queues and mutexes */
+	BarWsQueueDestroy(&ctx->broadcastQueue);
+	BarWsQueueDestroy(&ctx->commandQueue);
+	pthread_mutex_destroy(&ctx->stateMutex);
 	
 	if (ctx->connections) {
 		free(ctx->connections);
@@ -225,6 +378,7 @@ void BarWebsocketBroadcastSongStart(BarApp_t *app) {
 	BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
 	
 	/* Update progress tracking */
+	pthread_mutex_lock(&ctx->stateMutex);
 	ctx->progress.songStartTime = time(NULL);
 	ctx->progress.isPlaying = true;
 	ctx->progress.lastBroadcast = 0;
@@ -233,8 +387,13 @@ void BarWebsocketBroadcastSongStart(BarApp_t *app) {
 	if (app->player.songDuration > 0) {
 		ctx->progress.songDuration = app->player.songDuration;
 	}
+	pthread_mutex_unlock(&ctx->stateMutex);
 	
-	/* Broadcast start event via Socket.IO */
+	/* Queue start event for WebSocket thread */
+	/* For now, send without song data (will add song serialization later) */
+	BarWsQueuePush(&ctx->broadcastQueue, MSG_TYPE_BROADCAST_START, NULL, 0);
+	
+	/* TEMPORARY: Also call Socket.IO directly until thread processing is complete */
 	BarSocketIoEmitStart(app);
 }
 
@@ -246,9 +405,14 @@ void BarWebsocketBroadcastSongStop(BarApp_t *app) {
 	
 	BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
 	
+	pthread_mutex_lock(&ctx->stateMutex);
 	ctx->progress.isPlaying = false;
+	pthread_mutex_unlock(&ctx->stateMutex);
 	
-	/* Broadcast stop event via Socket.IO */
+	/* Queue stop event for WebSocket thread */
+	BarWsQueuePush(&ctx->broadcastQueue, MSG_TYPE_BROADCAST_STOP, NULL, 0);
+	
+	/* TEMPORARY: Also call Socket.IO directly until thread processing is complete */
 	BarSocketIoEmitStop(app);
 }
 
@@ -258,7 +422,12 @@ void BarWebsocketBroadcastVolume(BarApp_t *app, int volume) {
 		return;
 	}
 	
-	/* Broadcast volume event via Socket.IO */
+	BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
+	
+	/* Queue volume event for WebSocket thread */
+	BarWsQueuePush(&ctx->broadcastQueue, MSG_TYPE_BROADCAST_VOLUME, &volume, sizeof(volume));
+	
+	/* TEMPORARY: Also call Socket.IO directly until thread processing is complete */
 	BarSocketIoEmitVolume(app, volume);
 }
 
@@ -270,7 +439,11 @@ void BarWebsocketBroadcastProgress(BarApp_t *app) {
 	
 	BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
 	
+	/* Lock to safely access progress state */
+	pthread_mutex_lock(&ctx->stateMutex);
+	
 	if (!ctx->progress.isPlaying) {
+		pthread_mutex_unlock(&ctx->stateMutex);
 		return;
 	}
 	
@@ -280,13 +453,18 @@ void BarWebsocketBroadcastProgress(BarApp_t *app) {
 	
 	/* Only broadcast every second to avoid spam */
 	if (elapsed == ctx->progress.lastBroadcast) {
+		pthread_mutex_unlock(&ctx->stateMutex);
 		return;
 	}
 	
 	ctx->progress.lastBroadcast = elapsed;
+	unsigned int duration = ctx->progress.songDuration;
 	
-	/* Broadcast progress via Socket.IO */
-	BarSocketIoEmitProgress(app, (unsigned int)elapsed, ctx->progress.songDuration);
+	pthread_mutex_unlock(&ctx->stateMutex);
+	
+	/* Queue progress update for WebSocket thread */
+	unsigned int times[2] = {(unsigned int)elapsed, duration};
+	BarWsQueuePush(&ctx->broadcastQueue, MSG_TYPE_BROADCAST_PROGRESS, times, sizeof(times));
 }
 
 /* Broadcast message to all connected WebSocket clients */
@@ -295,7 +473,7 @@ static void BarWebsocketBroadcast(const char *message, size_t len) {
 	 * For Phase 2.1, we log the message. Full implementation in Phase 4
 	 * will iterate through all connected clients and queue messages.
 	 */
-	fprintf(stderr, "WebSocket: Broadcast (%zu bytes): %s\n", len, message);
+	debugPrint(DEBUG_WEBSOCKET, "WebSocket: Broadcast (%zu bytes): %s\n", len, message);
 }
 
 /* Handle incoming WebSocket message */
@@ -308,7 +486,7 @@ void BarWebsocketHandleMessage(BarApp_t *app, const char *message,
 	/* Route to appropriate protocol handler */
 	if (strcmp(protocol, "homeassistant") == 0) {
 		/* TODO: Call BarHaBridgeHandleMessage(app, message); */
-		fprintf(stderr, "WebSocket: HA message received (not yet implemented)\n");
+		debugPrint(DEBUG_WEBSOCKET, "WebSocket: HA message received (not yet implemented)\n");
 	} else {
 		/* Default to Socket.IO */
 		BarSocketIoHandleMessage(app, message);
