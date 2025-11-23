@@ -13,3 +13,6 @@ node_modules/
 playwright-report/
 test-results/
 .vite/
+
+# Agent context and plans
+.claude/
