@@ -23,6 +23,7 @@ export class PianobarApp extends LitElement {
   @state() private rating = 0;
   @state() private stations: any[] = [];
   @state() private currentStation = '';
+  @state() private songStationName = '';
   
   static styles = css`
     :host {
@@ -49,6 +50,12 @@ export class PianobarApp extends LitElement {
     .artist {
       color: var(--on-surface-variant);
       margin: 0;
+    }
+    
+    .station-info {
+      color: var(--on-surface-variant);
+      font-size: 0.875rem;
+      margin: 0.5rem 0 0 0;
     }
   `;
   
@@ -80,6 +87,7 @@ export class PianobarApp extends LitElement {
       this.totalTime = data.duration;
       this.playing = true;
       this.rating = data.rating || 0;
+      this.songStationName = data.songStationName || '';
     });
     
     this.socket.on('stop', () => {
@@ -125,6 +133,7 @@ export class PianobarApp extends LitElement {
         this.totalTime = data.song.duration || 0;
         this.playing = data.playing || false;
         this.rating = data.song.rating || 0;
+        this.songStationName = data.song.songStationName || '';
       } else {
         // No song playing
         this.albumArt = '';
@@ -134,6 +143,7 @@ export class PianobarApp extends LitElement {
         this.currentTime = 0;
         this.totalTime = 0;
         this.rating = 0;
+        this.songStationName = '';
       }
       
       // Update current station if present
@@ -195,6 +205,9 @@ export class PianobarApp extends LitElement {
       <div class="song-info">
         <h1>${this.connected ? this.songTitle : 'Disconnected'}</h1>
         <p class="artist">${this.connected ? this.artistName : '—'}</p>
+        ${this.songStationName ? html`
+          <p class="station-info">From: ${this.songStationName}</p>
+        ` : ''}
       </div>
       
       <progress-bar 

@@ -50,13 +50,22 @@ export class BottomToolbar extends LitElement {
       color: var(--on-primary-container);
     }
     
+    button.loved {
+      color: #4CAF50;
+    }
+    
+    button.loved:hover {
+      background: rgba(76, 175, 80, 0.1);
+      color: #4CAF50;
+    }
+    
     .button-group {
       position: relative;
       display: inline-block;
     }
     
-    .material-icons {
-      font-family: 'Material Icons';
+    .material-icons,
+    .material-icons-outlined {
       font-weight: normal;
       font-style: normal;
       font-size: 20px;
@@ -71,6 +80,14 @@ export class BottomToolbar extends LitElement {
       -moz-font-feature-settings: 'liga';
       font-feature-settings: 'liga';
       -webkit-font-smoothing: antialiased;
+    }
+    
+    .material-icons {
+      font-family: 'Material Icons';
+    }
+    
+    .material-icons-outlined {
+      font-family: 'Material Icons Outlined';
     }
   `;
   
@@ -123,9 +140,14 @@ export class BottomToolbar extends LitElement {
   render() {
     return html`
       <div class="button-group">
-        <button @click=${this.toggleTools}>
-          <span class="material-icons">tune</span>
-          <span>Tools</span>
+        <button 
+          @click=${this.toggleTools}
+          class="${this.rating === 1 ? 'loved' : ''}"
+          title="${this.rating === 1 ? 'Loved' : 'Rate this song'}"
+        >
+          <span class="${this.rating === 1 ? 'material-icons' : 'material-icons-outlined'}">
+            ${this.rating === 1 ? 'thumb_up' : 'thumbs_up_down'}
+          </span>
         </button>
         <song-actions-menu
           rating="${this.rating}"

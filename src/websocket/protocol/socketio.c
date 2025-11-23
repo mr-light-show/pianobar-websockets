@@ -290,6 +290,7 @@ void BarSocketIoEmit(const char *event, json_object *data) {
 /* Emit 'start' event (song started) */
 void BarSocketIoEmitStart(BarApp_t *app) {
 	json_object *data;
+	PianoStation_t *songStation;
 	
 	if (!app || !app->playlist) {
 		return;
@@ -314,6 +315,15 @@ void BarSocketIoEmitStart(BarApp_t *app) {
 	if (app->curStation) {
 		json_object_object_add(data, "station", 
 		                       json_object_new_string(app->curStation->name));
+	}
+	
+	/* Station the song came from (important in QuickMix) */
+	if (song->stationId) {
+		songStation = PianoFindStationById(app->ph.stations, song->stationId);
+		if (songStation) {
+			json_object_object_add(data, "songStationName",
+			                       json_object_new_string(songStation->name));
+		}
 	}
 	
 	BarSocketIoEmit("start", data);
@@ -404,6 +414,8 @@ void BarSocketIoEmitProcess(BarApp_t *app) {
 	}
 	
 	if (app->playlist) {
+		PianoStation_t *songStation;
+		
 		song = json_object_new_object();
 		json_object_object_add(song, "title", 
 		                       json_object_new_string(app->playlist->title));
@@ -417,6 +429,15 @@ void BarSocketIoEmitProcess(BarApp_t *app) {
 		                       json_object_new_int(app->playlist->rating));
 		json_object_object_add(song, "duration", 
 		                       json_object_new_int(app->playlist->length));
+		
+		/* Station the song came from (important in QuickMix) */
+		if (app->playlist->stationId) {
+			songStation = PianoFindStationById(app->ph.stations, app->playlist->stationId);
+			if (songStation) {
+				json_object_object_add(song, "songStationName",
+				                       json_object_new_string(songStation->name));
+			}
+		}
 		
 		json_object_object_add(data, "song", song);
 	}
