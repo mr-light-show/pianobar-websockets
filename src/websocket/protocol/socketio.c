@@ -1,6 +1,5 @@
 /*
 Copyright (c) 2025
-    Kyle Hawes <khawes@netflix.com>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,7 +21,9 @@ THE SOFTWARE.
 */
 
 #include "../../main.h"
+#include "../../debug.h"
 #include "socketio.h"
+#include "../core/websocket.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +47,7 @@ static const BarCommandMapping_t commandMappings[] = {
 	{"volume.up", ")"},
 	{"volume.down", "("},
 	{"volume.reset", "^"},
+	{"volume.set", "%"},
 	
 	/* Song */
 	{"song.love", "+"},
@@ -158,7 +160,7 @@ void BarSocketIoHandleMessage(BarApp_t *app, const char *message) {
 	type = BarSocketIoParse(message, &eventName, &data);
 	
 	if (type == SOCKETIO_CONNECT) {
-		fprintf(stderr, "Socket.IO: Client connected\n");
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Client connected\n");
 		/* Send initial state on connect */
 		BarSocketIoHandleQuery(app);
 		goto cleanup;
@@ -172,13 +174,18 @@ void BarSocketIoHandleMessage(BarApp_t *app, const char *message) {
 	if (strcmp(eventName, "action") == 0) {
 		if (data && json_object_is_type(data, json_type_string)) {
 			const char *action = json_object_get_string(data);
-			BarSocketIoHandleAction(app, action);
+			BarSocketIoHandleAction(app, action, NULL);
 		} else if (data && json_object_is_type(data, json_type_object)) {
 			json_object *actionObj;
 			if (json_object_object_get_ex(data, "action", &actionObj)) {
 				const char *action = json_object_get_string(actionObj);
 				if (action) {
-					BarSocketIoHandleAction(app, action);
+					BarSocketIoHandleAction(app, action, data);
+				}
+			} else if (json_object_object_get_ex(data, "command", &actionObj)) {
+				const char *action = json_object_get_string(actionObj);
+				if (action) {
+					BarSocketIoHandleAction(app, action, data);
 				}
 			}
 		}
@@ -203,10 +210,10 @@ void BarSocketIoHandleMessage(BarApp_t *app, const char *message) {
 		BarSocketIoHandleQuery(app);
 	} else if (strcmp(eventName, "query.stations") == 0) {
 		/* query.stations = just stations list */
-		fprintf(stderr, "Socket.IO: Query stations received\n");
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Query stations received\n");
 		BarSocketIoEmitStations(app);
 	} else {
-		fprintf(stderr, "Socket.IO: Unknown event: %s\n", eventName);
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Unknown event: %s\n", eventName);
 	}
 	
 cleanup:
@@ -266,7 +273,7 @@ void BarSocketIoEmit(const char *event, json_object *data) {
 	
 	message = BarSocketIoFormat(event, data);
 	if (!message) {
-		fprintf(stderr, "Socket.IO: Failed to format message\n");
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Failed to format message\n");
 		return;
 	}
 	
@@ -274,7 +281,7 @@ void BarSocketIoEmit(const char *event, json_object *data) {
 	if (g_broadcastCallback) {
 		g_broadcastCallback(message, strlen(message));
 	} else {
-		fprintf(stderr, "Socket.IO: Emit '%s' (no broadcast callback set)\n", event);
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Emit '%s' (no broadcast callback set)\n", event);
 	}
 	
 	free(message);
@@ -364,6 +371,8 @@ void BarSocketIoEmitStations(BarApp_t *app) {
 		                       json_object_new_string(curStation->name));
 		json_object_object_add(station, "isQuickMix", 
 		                       json_object_new_boolean(curStation->isQuickMix));
+		json_object_object_add(station, "isQuickMixed", 
+		                       json_object_new_boolean(curStation->useQuickMix));
 		
 		json_object_array_add(stations, station);
 		curStation = (PianoStation_t *) curStation->head.next;
@@ -384,6 +393,10 @@ void BarSocketIoEmitProcess(BarApp_t *app) {
 	data = json_object_new_object();
 	json_object_object_add(data, "playing", 
 	                       json_object_new_boolean(app->playlist != NULL));
+	
+	/* Include current volume */
+	json_object_object_add(data, "volume", 
+	                       json_object_new_int(app->settings.volume));
 	
 	if (app->curStation) {
 		json_object_object_add(data, "station", 
@@ -433,10 +446,12 @@ static PianoStation_t *BarSocketIoFindStation(BarApp_t *app, const char *nameOrI
 }
 
 /* Handle 'action' event from client */
-void BarSocketIoHandleAction(BarApp_t *app, const char *action) {
+void BarSocketIoHandleAction(BarApp_t *app, const char *action, json_object *data) {
 	const char *translated;
+	BarWsContext_t *ctx;
+	char commandBuffer[16];
 	
-	if (!app || !action) {
+	if (!app || !action || !app->wsContext) {
 		return;
 	}
 	
@@ -444,15 +459,39 @@ void BarSocketIoHandleAction(BarApp_t *app, const char *action) {
 	translated = BarSocketIoTranslateCommand(action);
 	
 	if (!translated) {
-		fprintf(stderr, "Socket.IO: Unknown or unsupported action: %s\n", action);
-		fprintf(stderr, "Socket.IO: Use descriptive commands (e.g., playback.next, song.love)\n");
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Unknown or unsupported action: %s\n", action);
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Use descriptive commands (e.g., playback.next, song.love)\n");
 		return;
 	}
 	
-	fprintf(stderr, "Socket.IO: Action '%s' → '%s'\n", action, translated);
+	/* Special handling for volume.set with percentage value */
+	if (strcmp(action, "volume.set") == 0 && data) {
+		json_object *volumeObj;
+		if (json_object_object_get_ex(data, "volume", &volumeObj)) {
+			int volume = json_object_get_int(volumeObj);
+			/* Clamp to 0-100 range */
+			if (volume < 0) volume = 0;
+			if (volume > 100) volume = 100;
+			
+			/* Format as "%75" (command + value) */
+			snprintf(commandBuffer, sizeof(commandBuffer), "%%%d", volume);
+			debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Action '%s' → '%s' (volume: %d)\n", 
+			           action, translated, volume);
+			
+			/* Queue command for main loop to process */
+			ctx = (BarWsContext_t *)app->wsContext;
+			BarWsQueuePush(&ctx->commandQueue, MSG_TYPE_COMMAND_ACTION, 
+			               commandBuffer, strlen(commandBuffer) + 1);
+			return;
+		}
+	}
 	
-	/* Queue action for main loop processing
-	 * In Phase 4, translated command will be queued for processing by the main event loop */
+	debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Action '%s' → '%s'\n", action, translated);
+	
+	/* Queue command for main loop to process */
+	ctx = (BarWsContext_t *)app->wsContext;
+	BarWsQueuePush(&ctx->commandQueue, MSG_TYPE_COMMAND_ACTION, 
+	               translated, strlen(translated) + 1);
 }
 
 /* Handle 'changeStation' event from client */
@@ -463,25 +502,25 @@ void BarSocketIoHandleChangeStation(BarApp_t *app, const char *stationName) {
 		return;
 	}
 	
-	fprintf(stderr, "Socket.IO: Change station request: %s\n", stationName);
+	debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Change station request: %s\n", stationName);
 	
 	/* Find station by name or ID */
 	station = BarSocketIoFindStation(app, stationName);
 	
 	if (station) {
-		fprintf(stderr, "Socket.IO: Switching to station: %s\n", station->name);
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Switching to station: %s\n", station->name);
 		/* Set as next station to play */
 		app->nextStation = station;
 		
-		/* In Phase 4, we'll trigger station change in main loop:
-		 * - Clear current playlist
-		 * - Fetch new songs from nextStation
-		 * - Start playback
-		 * For now, we just set nextStation which will be picked up
-		 * when current playlist runs out or user skips
-		 */
+		/* Queue the station change command to trigger immediate change */
+		BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
+		if (ctx) {
+			BarWsQueuePush(&ctx->commandQueue, MSG_TYPE_COMMAND_ACTION, 
+			               "s", 2);
+			debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Queued station change command\n");
+		}
 	} else {
-		fprintf(stderr, "Socket.IO: Station not found: %s\n", stationName);
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Station not found: %s\n", stationName);
 	}
 }
 
@@ -491,7 +530,7 @@ void BarSocketIoHandleQuery(BarApp_t *app) {
 		return;
 	}
 	
-	fprintf(stderr, "Socket.IO: Query received\n");
+	debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Query received\n");
 	
 	/* Send full state to client */
 	BarSocketIoEmitProcess(app);
