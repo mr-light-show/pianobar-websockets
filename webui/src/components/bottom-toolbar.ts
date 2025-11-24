@@ -113,19 +113,18 @@ export class BottomToolbar extends LitElement {
     
     // Determine what to display on the button
     let stationDisplayName = this.currentStation || 'Select Station';
-    let stationIcon = 'radio';
     
     if (isQuickMix && this.songStationName) {
-      // If it's QuickMix, show shuffle icon and the song's station name
-      stationIcon = 'shuffle';
+      // If it's QuickMix, show the song's station name
       stationDisplayName = this.songStationName;
     }
     
     return html`
       <div class="button-group">
         <button @click=${this.toggleStations} title="Select Station">
-          <span class="material-icons">${stationIcon}</span>
+          <span class="material-icons">radio</span>
           <span>${stationDisplayName}</span>
+          ${isQuickMix ? html`<span class="material-icons">shuffle</span>` : ''}
         </button>
         <stations-popup
           .stations="${this.stations}"
