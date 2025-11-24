@@ -8,6 +8,7 @@ import './components/playback-controls';
 import './components/volume-control';
 import './components/reconnect-button';
 import './components/bottom-toolbar';
+import './components/toast-notification';
 
 @customElement('pianobar-app')
 export class PianobarApp extends LitElement {
@@ -160,6 +161,24 @@ export class PianobarApp extends LitElement {
         (volumeControl as any).updateFromDb(data.volume);
       }
     });
+    
+    // Song explanation event
+    this.socket.on('song.explanation', (data) => {
+      console.log('Received explanation:', data);
+      if (data.explanation) {
+        this.showToast(data.explanation);
+      }
+    });
+    
+    // Upcoming songs event
+    this.socket.on('query.upcoming.result', (data) => {
+      console.log('Received upcoming songs:', data);
+      if (Array.isArray(data) && data.length > 0) {
+        this.showUpcomingSongsToast(data);
+      } else {
+        this.showToast('No upcoming songs in queue');
+      }
+    });
   }
   
   handlePlayPause() {
@@ -198,6 +217,61 @@ export class PianobarApp extends LitElement {
   
   handleReconnect() {
     this.socket.reconnect();
+  }
+  
+  handleInfoExplain() {
+    this.socket.emit('action', 'song.explain');
+  }
+  
+  handleInfoUpcoming() {
+    this.socket.emit('action', 'query.upcoming');
+  }
+  
+  showToast(message: string) {
+    const toast = document.createElement('toast-notification') as any;
+    toast.message = message;
+    toast.duration = 5000;
+    document.body.appendChild(toast);
+  }
+  
+  showUpcomingSongsToast(songs: any[]) {
+    const formatDuration = (seconds: number) => {
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
+    
+    const content = html`
+      <div>
+        <strong>Upcoming Songs</strong>
+        <div class="song-list">
+          ${songs.map((song, index) => html`
+            <div class="song-item">
+              <div class="song-number">${index + 1}</div>
+              ${song.coverArt ? html`
+                <img class="song-cover" src="${song.coverArt}" alt="${song.title}" />
+              ` : ''}
+              <div class="song-details">
+                <p class="song-title">${song.title}</p>
+                <p class="song-artist">${song.artist}</p>
+                ${song.stationName ? html`
+                  <p class="song-station">From: ${song.stationName}</p>
+                ` : ''}
+              </div>
+              ${song.rating === 1 ? html`
+                <span class="material-icons">thumb_up</span>
+              ` : ''}
+              <div class="song-duration">${formatDuration(song.duration)}</div>
+            </div>
+          `)}
+        </div>
+      </div>
+    `;
+    
+    const toast = document.createElement('toast-notification') as any;
+    toast.content = content;
+    toast.duration = 5000;
+    document.body.appendChild(toast);
   }
   
   render() {
@@ -240,6 +314,8 @@ export class PianobarApp extends LitElement {
           @ban=${this.handleBan}
           @tired=${this.handleTired}
           @station-change=${this.handleStationChange}
+          @info-explain=${this.handleInfoExplain}
+          @info-upcoming=${this.handleInfoUpcoming}
         ></bottom-toolbar>
       ` : html`
         <reconnect-button 

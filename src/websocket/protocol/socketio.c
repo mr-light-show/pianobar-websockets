@@ -477,6 +477,72 @@ void BarSocketIoEmitProcess(BarApp_t *app) {
 	json_object_put(data);
 }
 
+/* Emit 'song.explanation' event (explanation text) */
+void BarSocketIoEmitExplanation(BarApp_t *app, const char *explanation) {
+	json_object *data;
+	
+	if (!app || !explanation) {
+		return;
+	}
+	
+	data = json_object_new_object();
+	json_object_object_add(data, "explanation", 
+	                       json_object_new_string(explanation));
+	
+	BarSocketIoEmit("song.explanation", data);
+	json_object_put(data);
+}
+
+/* Emit 'query.upcoming.result' event (upcoming songs list) */
+void BarSocketIoEmitUpcoming(BarApp_t *app, PianoSong_t *firstSong, int maxSongs) {
+	json_object *songs, *songObj;
+	PianoSong_t *song;
+	PianoStation_t *songStation;
+	int count = 0;
+	
+	if (!app) {
+		return;
+	}
+	
+	songs = json_object_new_array();
+	
+	/* Iterate through upcoming songs (limited to maxSongs) */
+	song = firstSong;
+	while (song && count < maxSongs) {
+		songObj = json_object_new_object();
+		
+		json_object_object_add(songObj, "title", 
+		                       json_object_new_string(song->title ? song->title : ""));
+		json_object_object_add(songObj, "artist", 
+		                       json_object_new_string(song->artist ? song->artist : ""));
+		json_object_object_add(songObj, "album", 
+		                       json_object_new_string(song->album ? song->album : ""));
+		json_object_object_add(songObj, "coverArt", 
+		                       json_object_new_string(song->coverArt ? song->coverArt : ""));
+		json_object_object_add(songObj, "duration", 
+		                       json_object_new_int(song->length));
+		json_object_object_add(songObj, "rating", 
+		                       json_object_new_int(song->rating));
+		
+		/* Add station name the song came from */
+		if (song->stationId) {
+			songStation = PianoFindStationById(app->ph.stations, song->stationId);
+			if (songStation) {
+				json_object_object_add(songObj, "stationName",
+				                       json_object_new_string(songStation->name));
+			}
+		}
+		
+		json_object_array_add(songs, songObj);
+		
+		song = (PianoSong_t *)song->head.next;
+		count++;
+	}
+	
+	BarSocketIoEmit("query.upcoming.result", songs);
+	json_object_put(songs);
+}
+
 /* Helper: Find station by name or ID */
 static PianoStation_t *BarSocketIoFindStation(BarApp_t *app, const char *nameOrId) {
 	PianoStation_t *station;

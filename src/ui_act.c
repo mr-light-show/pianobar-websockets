@@ -279,6 +279,14 @@ BarUiActCallback(BarUiActExplain) {
 			BarUiMsg (&app->settings, MSG_ERR, "No explanation provided.\n");
 		} else {
 			BarUiMsg (&app->settings, MSG_INFO, "%s\n", reqData.retExplain);
+			
+			/* Emit explanation via WebSocket */
+			#ifdef WEBSOCKET_ENABLED
+			if (app->wsContext) {
+				BarSocketIoEmitExplanation(app, reqData.retExplain);
+			}
+			#endif
+			
 			free (reqData.retExplain);
 		}
 	}
@@ -515,6 +523,13 @@ BarUiActCallback(BarUiActPrintUpcoming) {
 	PianoSong_t * const nextSong = PianoListNextP (selSong);
 	if (nextSong != NULL) {
 		BarUiListSongs (app, nextSong, NULL);
+		
+		/* Emit upcoming songs via WebSocket (max 5) */
+		#ifdef WEBSOCKET_ENABLED
+		if (app->wsContext) {
+			BarSocketIoEmitUpcoming(app, nextSong, 5);
+		}
+		#endif
 	} else {
 		BarUiMsg (&app->settings, MSG_INFO, "No songs in queue.\n");
 	}

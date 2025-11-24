@@ -2,6 +2,7 @@ import { LitElement, html, css } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import './song-actions-menu';
 import './stations-popup';
+import './info-menu';
 
 interface Station {
   id: string;
@@ -98,6 +99,12 @@ export class BottomToolbar extends LitElement {
       (stationsPopup as any).closeMenu();
     }
     
+    // Close info menu
+    const infoMenu = this.shadowRoot!.querySelector('info-menu');
+    if (infoMenu) {
+      (infoMenu as any).closeMenu();
+    }
+    
     // Then toggle tools menu
     const menu = this.shadowRoot!.querySelector('song-actions-menu');
     if (menu) {
@@ -112,10 +119,36 @@ export class BottomToolbar extends LitElement {
       (toolsMenu as any).closeMenu();
     }
     
+    // Close info menu
+    const infoMenu = this.shadowRoot!.querySelector('info-menu');
+    if (infoMenu) {
+      (infoMenu as any).closeMenu();
+    }
+    
     // Then toggle stations menu
     const popup = this.shadowRoot!.querySelector('stations-popup');
     if (popup) {
       (popup as any).toggleMenu(e);
+    }
+  }
+  
+  toggleInfo(e: MouseEvent) {
+    // Close tools menu first
+    const toolsMenu = this.shadowRoot!.querySelector('song-actions-menu');
+    if (toolsMenu) {
+      (toolsMenu as any).closeMenu();
+    }
+    
+    // Close stations menu
+    const stationsPopup = this.shadowRoot!.querySelector('stations-popup');
+    if (stationsPopup) {
+      (stationsPopup as any).closeMenu();
+    }
+    
+    // Then toggle info menu
+    const menu = this.shadowRoot!.querySelector('info-menu');
+    if (menu) {
+      (menu as any).toggleMenu(e);
     }
   }
   
@@ -137,6 +170,14 @@ export class BottomToolbar extends LitElement {
     }));
   }
   
+  handleInfoExplain() {
+    this.dispatchEvent(new CustomEvent('info-explain'));
+  }
+  
+  handleInfoUpcoming() {
+    this.dispatchEvent(new CustomEvent('info-upcoming'));
+  }
+  
   render() {
     return html`
       <div class="button-group">
@@ -155,6 +196,16 @@ export class BottomToolbar extends LitElement {
           @ban=${this.handleBan}
           @tired=${this.handleTired}
         ></song-actions-menu>
+      </div>
+      
+      <div class="button-group">
+        <button @click=${this.toggleInfo} title="Song info">
+          <span class="material-icons">info_outline</span>
+        </button>
+        <info-menu
+          @info-explain=${this.handleInfoExplain}
+          @info-upcoming=${this.handleInfoUpcoming}
+        ></info-menu>
       </div>
       
       <div class="button-group">
