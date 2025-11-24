@@ -237,6 +237,16 @@ static void drainPlaylist (BarApp_t * const app) {
 	}
 }
 
+/*	Switch to a station (for WebSocket/programmatic use)
+ */
+void BarUiSwitchStation (BarApp_t * const app, PianoStation_t * const station) {
+	assert (app != NULL);
+	assert (station != NULL);
+	
+	app->nextStation = station;
+	drainPlaylist (app);
+}
+
 /*	delete current station
  */
 BarUiActCallback(BarUiActDeleteStation) {

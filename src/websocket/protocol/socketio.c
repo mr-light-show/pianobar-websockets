@@ -23,8 +23,12 @@ THE SOFTWARE.
 #include "../../main.h"
 #include "../../debug.h"
 #include "../../ui.h"
+#include "../../ui_dispatch.h"
 #include "socketio.h"
 #include "../core/websocket.h"
+
+/* Forward declare ui_act function to avoid full header include */
+extern void BarUiSwitchStation(BarApp_t *app, PianoStation_t *station);
 
 #include <stdlib.h>
 #include <string.h>
@@ -228,6 +232,15 @@ void BarSocketIoHandleMessage(BarApp_t *app, const char *message) {
 		/* query.stations = just stations list */
 		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Query stations received\n");
 		BarSocketIoEmitStations(app);
+	} else if (strcmp(eventName, "station.setQuickMix") == 0) {
+		/* Set QuickMix stations from array of station IDs */
+		BarSocketIoHandleSetQuickMix(app, data);
+	} else if (strcmp(eventName, "station.delete") == 0) {
+		/* Delete a station */
+		BarSocketIoHandleDeleteStation(app, data);
+	} else if (strcmp(eventName, "station.createFrom") == 0) {
+		/* Create station from current song or artist */
+		BarSocketIoHandleCreateStationFrom(app, data);
 	} else {
 		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Unknown event: %s\n", eventName);
 	}
@@ -327,10 +340,14 @@ void BarSocketIoEmitStart(BarApp_t *app) {
 	                       json_object_new_int(song->rating));
 	json_object_object_add(data, "duration", 
 	                       json_object_new_int(song->length));
+	json_object_object_add(data, "trackToken", 
+	                       json_object_new_string(song->trackToken ? song->trackToken : ""));
 	
 	if (app->curStation) {
 		json_object_object_add(data, "station", 
 		                       json_object_new_string(app->curStation->name));
+		json_object_object_add(data, "stationId",
+		                       json_object_new_string(app->curStation->id));
 	}
 	
 	/* Station the song came from (important in QuickMix) */
@@ -442,6 +459,8 @@ void BarSocketIoEmitProcess(BarApp_t *app) {
 	if (app->curStation) {
 		json_object_object_add(data, "station", 
 		                       json_object_new_string(app->curStation->name));
+		json_object_object_add(data, "stationId",
+		                       json_object_new_string(app->curStation->id));
 	}
 	
 	if (app->playlist) {
@@ -460,6 +479,8 @@ void BarSocketIoEmitProcess(BarApp_t *app) {
 		                       json_object_new_int(app->playlist->rating));
 		json_object_object_add(song, "duration", 
 		                       json_object_new_int(app->playlist->length));
+		json_object_object_add(song, "trackToken", 
+		                       json_object_new_string(app->playlist->trackToken ? app->playlist->trackToken : ""));
 		
 		/* Station the song came from (important in QuickMix) */
 		if (app->playlist->stationId) {
@@ -630,18 +651,206 @@ void BarSocketIoHandleChangeStation(BarApp_t *app, const char *stationName) {
 	
 	if (station) {
 		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Switching to station: %s\n", station->name);
-		/* Set as next station to play */
-		app->nextStation = station;
-		
-		/* Queue the station change command to trigger immediate change */
-		BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
-		if (ctx) {
-			BarWsQueuePush(&ctx->commandQueue, MSG_TYPE_COMMAND_ACTION, 
-			               "s", 2);
-			debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Queued station change command\n");
-		}
+		/* Switch to the new station and drain current playlist */
+		BarUiSwitchStation(app, station);
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Station switch initiated\n");
 	} else {
 		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Station not found: %s\n", stationName);
+	}
+}
+
+/* Handle 'station.setQuickMix' event from client */
+void BarSocketIoHandleSetQuickMix(BarApp_t *app, json_object *data) {
+	PianoStation_t *station;
+	json_object *stationIdsArray;
+	int arrayLen, i;
+	
+	if (!app || !data) {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: setQuickMix - invalid parameters\n");
+		return;
+	}
+	
+	/* Expect data to be an array of station IDs */
+	if (!json_object_is_type(data, json_type_array)) {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: setQuickMix - data is not an array\n");
+		return;
+	}
+	
+	debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Setting QuickMix stations...\n");
+	
+	/* First, set all stations to NOT be in QuickMix */
+	station = app->ph.stations;
+	PianoListForeachP (station) {
+		station->useQuickMix = false;
+	}
+	
+	/* Now set the selected stations to be in QuickMix */
+	arrayLen = json_object_array_length(data);
+	for (i = 0; i < arrayLen; i++) {
+		json_object *stationIdObj = json_object_array_get_idx(data, i);
+		if (stationIdObj && json_object_is_type(stationIdObj, json_type_string)) {
+			const char *stationId = json_object_get_string(stationIdObj);
+			
+			/* Find station by ID */
+			station = app->ph.stations;
+			PianoListForeachP (station) {
+				if (strcmp(station->id, stationId) == 0) {
+					station->useQuickMix = true;
+					debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Added '%s' to QuickMix\n", 
+					           station->name);
+					break;
+				}
+			}
+		}
+	}
+	
+	/* Call Pandora API to save QuickMix settings */
+	PianoReturn_t pRet;
+	CURLcode wRet;
+	if (BarUiPianoCall(app, PIANO_REQUEST_SET_QUICKMIX, NULL, &pRet, &wRet)) {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: QuickMix settings saved successfully\n");
+		
+		/* Emit updated station list to all clients */
+		BarSocketIoEmitStations(app);
+	} else {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Failed to save QuickMix settings\n");
+	}
+}
+
+/* Handle 'station.delete' event from client */
+void BarSocketIoHandleDeleteStation(BarApp_t *app, json_object *data) {
+	PianoReturn_t pRet;
+	CURLcode wRet;
+	PianoStation_t *station;
+	const char *stationId;
+	bool wasCurrentStation;
+	
+	if (!app || !data) {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: deleteStation - invalid parameters\n");
+		return;
+	}
+	
+	/* Extract station ID from data (can be string or in object) */
+	if (json_object_is_type(data, json_type_string)) {
+		stationId = json_object_get_string(data);
+	} else if (json_object_is_type(data, json_type_object)) {
+		json_object *stationIdObj;
+		if (json_object_object_get_ex(data, "stationId", &stationIdObj)) {
+			stationId = json_object_get_string(stationIdObj);
+		} else {
+			debugPrint(DEBUG_WEBSOCKET, "Socket.IO: deleteStation - missing stationId\n");
+			return;
+		}
+	} else {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: deleteStation - invalid data type\n");
+		return;
+	}
+	
+	if (!stationId) {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: deleteStation - null stationId\n");
+		return;
+	}
+	
+	debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Delete station request: %s\n", stationId);
+	
+	/* Find station by ID or name */
+	station = BarSocketIoFindStation(app, stationId);
+	
+	if (!station) {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Station not found: %s\n", stationId);
+		return;
+	}
+	
+	debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Deleting station: %s\n", station->name);
+	
+	/* Check if this is the currently playing station */
+	wasCurrentStation = (station == app->curStation);
+	
+	/* Delete the station */
+	if (BarUiPianoCall(app, PIANO_REQUEST_DELETE_STATION, station, &pRet, &wRet)) {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Station deleted successfully\n");
+		
+		/* If we deleted the current station, switch to QuickMix */
+		if (wasCurrentStation) {
+			PianoStation_t *quickMixStation = NULL;
+			PianoStation_t *curStation = app->ph.stations;
+			
+			/* Find QuickMix station */
+			while (curStation != NULL) {
+				if (curStation->isQuickMix) {
+					quickMixStation = curStation;
+					break;
+				}
+				curStation = (PianoStation_t *)curStation->head.next;
+			}
+			
+			if (quickMixStation) {
+				debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Switching to QuickMix after deletion\n");
+				BarUiSwitchStation(app, quickMixStation);
+			}
+			
+			/* Clear curStation as the struct was destroyed */
+			app->curStation = NULL;
+		}
+		
+		/* Emit updated station list to all clients */
+		BarSocketIoEmitStations(app);
+	} else {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Failed to delete station\n");
+	}
+}
+
+/* Handle 'station.createFrom' event from client */
+void BarSocketIoHandleCreateStationFrom(BarApp_t *app, json_object *data) {
+	PianoReturn_t pRet;
+	CURLcode wRet;
+	PianoRequestDataCreateStation_t reqData;
+	json_object *trackTokenObj, *typeObj;
+	const char *trackToken, *type;
+	
+	if (!app || !data) {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: createFrom - invalid parameters\n");
+		return;
+	}
+	
+	/* Extract trackToken and type from data */
+	if (!json_object_object_get_ex(data, "trackToken", &trackTokenObj) ||
+	    !json_object_object_get_ex(data, "type", &typeObj)) {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: createFrom - missing trackToken or type\n");
+		return;
+	}
+	
+	trackToken = json_object_get_string(trackTokenObj);
+	type = json_object_get_string(typeObj);
+	
+	if (!trackToken || !type) {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: createFrom - invalid trackToken or type\n");
+		return;
+	}
+	
+	debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Creating station from %s...\n", type);
+	
+	/* Set up request data */
+	reqData.token = (char *)trackToken;
+	reqData.type = PIANO_MUSICTYPE_INVALID;
+	
+	if (strcmp(type, "song") == 0) {
+		reqData.type = PIANO_MUSICTYPE_SONG;
+	} else if (strcmp(type, "artist") == 0) {
+		reqData.type = PIANO_MUSICTYPE_ARTIST;
+	} else {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: createFrom - invalid type: %s\n", type);
+		return;
+	}
+	
+	/* Create the station */
+	if (BarUiPianoCall(app, PIANO_REQUEST_CREATE_STATION, &reqData, &pRet, &wRet)) {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Station created successfully\n");
+		
+		/* Emit updated station list to all clients */
+		BarSocketIoEmitStations(app);
+	} else {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Failed to create station\n");
 	}
 }
 

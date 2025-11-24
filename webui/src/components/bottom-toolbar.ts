@@ -13,6 +13,7 @@ interface Station {
 export class BottomToolbar extends LitElement {
   @property({ type: Array }) stations: Station[] = [];
   @property() currentStation = '';
+  @property() currentStationId = '';
   @property({ type: Number }) rating = 0;
   
   static styles = css`
@@ -178,6 +179,18 @@ export class BottomToolbar extends LitElement {
     this.dispatchEvent(new CustomEvent('info-upcoming'));
   }
   
+  handleInfoQuickMix() {
+    this.dispatchEvent(new CustomEvent('info-quickmix'));
+  }
+  
+  handleInfoCreateStation() {
+    this.dispatchEvent(new CustomEvent('info-create-station'));
+  }
+  
+  handleInfoDeleteStation() {
+    this.dispatchEvent(new CustomEvent('info-delete-station'));
+  }
+  
   render() {
     return html`
       <div class="button-group">
@@ -205,6 +218,9 @@ export class BottomToolbar extends LitElement {
         <info-menu
           @info-explain=${this.handleInfoExplain}
           @info-upcoming=${this.handleInfoUpcoming}
+          @info-quickmix=${this.handleInfoQuickMix}
+          @info-create-station=${this.handleInfoCreateStation}
+          @info-delete-station=${this.handleInfoDeleteStation}
         ></info-menu>
       </div>
       
@@ -216,6 +232,7 @@ export class BottomToolbar extends LitElement {
         <stations-popup
           .stations="${this.stations}"
           currentStation="${this.currentStation}"
+          currentStationId="${this.currentStationId}"
           @station-change=${this.handleStationChange}
         ></stations-popup>
       </div>

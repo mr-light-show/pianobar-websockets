@@ -29,8 +29,7 @@ THE SOFTWARE.
 /* Note: main.h must be included before this header to get BarApp_t definition */
 
 /* Forward declarations */
-struct json_object;  /* from json-c */
-struct PianoSong;    /* from piano.h */
+struct json_object;
 
 /* Socket.IO message types */
 typedef enum {
@@ -82,6 +81,15 @@ void BarSocketIoHandleAction(BarApp_t *app, const char *action, struct json_obje
 
 /* Handle 'changeStation' event from client */
 void BarSocketIoHandleChangeStation(BarApp_t *app, const char *stationName);
+
+/* Handle 'station.setQuickMix' event from client */
+void BarSocketIoHandleSetQuickMix(BarApp_t *app, struct json_object *data);
+
+/* Handle 'station.delete' event from client */
+void BarSocketIoHandleDeleteStation(BarApp_t *app, struct json_object *data);
+
+/* Handle 'station.createFrom' event from client */
+void BarSocketIoHandleCreateStationFrom(BarApp_t *app, struct json_object *data);
 
 /* Handle 'query' event from client */
 void BarSocketIoHandleQuery(BarApp_t *app);

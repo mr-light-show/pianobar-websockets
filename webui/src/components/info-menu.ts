@@ -69,6 +69,14 @@ export class InfoMenu extends LitElement {
       background: var(--surface-variant);
     }
     
+    .action-button.delete {
+      color: var(--error);
+    }
+    
+    .action-button.delete:hover {
+      background: rgba(255, 0, 0, 0.1);
+    }
+    
     .material-icons {
       font-family: 'Material Icons';
       font-weight: normal;
@@ -109,6 +117,21 @@ export class InfoMenu extends LitElement {
     this.closeMenu();
   }
   
+  handleQuickMix() {
+    this.dispatchEvent(new CustomEvent('info-quickmix'));
+    this.closeMenu();
+  }
+  
+  handleCreateStation() {
+    this.dispatchEvent(new CustomEvent('info-create-station'));
+    this.closeMenu();
+  }
+  
+  handleDeleteStation() {
+    this.dispatchEvent(new CustomEvent('info-delete-station'));
+    this.closeMenu();
+  }
+  
   render() {
     return html`
       <div class="menu-popup ${this.menuOpen ? '' : 'hidden'}">
@@ -119,6 +142,18 @@ export class InfoMenu extends LitElement {
         <button class="action-button" @click=${this.handleUpcoming}>
           <span class="material-icons">queue_music</span>
           <span>Show upcoming songs</span>
+        </button>
+        <button class="action-button" @click=${this.handleQuickMix}>
+          <span class="material-icons">library_music</span>
+          <span>Select QuickMix stations</span>
+        </button>
+        <button class="action-button" @click=${this.handleCreateStation}>
+          <span class="material-icons">add_circle</span>
+          <span>Create station from song/artist</span>
+        </button>
+        <button class="action-button delete" @click=${this.handleDeleteStation}>
+          <span class="material-icons">delete</span>
+          <span>Delete station</span>
         </button>
       </div>
     `;

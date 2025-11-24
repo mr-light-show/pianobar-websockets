@@ -9,16 +9,21 @@ export class ToastNotification extends LitElement {
   @state() private visible = false;
   
   private timeoutId: number | null = null;
+  private clickDismissEnabled = false;
   
   connectedCallback() {
     super.connectedCallback();
-    // Listen for clicks on document to close toast
-    document.addEventListener('click', this.handleClickOutside);
     
     // Show with animation
     setTimeout(() => {
       this.visible = true;
     }, 10);
+    
+    // Enable click-to-dismiss after 1 second to prevent modal close click from dismissing
+    setTimeout(() => {
+      this.clickDismissEnabled = true;
+      document.addEventListener('click', this.handleClickOutside);
+    }, 1000);
     
     // Auto-dismiss after duration
     if (this.duration > 0) {
@@ -37,8 +42,8 @@ export class ToastNotification extends LitElement {
   }
   
   private handleClickOutside = (event: MouseEvent) => {
-    // Check if click is outside this component
-    if (!event.composedPath().includes(this)) {
+    // Only dismiss if click-to-dismiss is enabled and click is outside
+    if (this.clickDismissEnabled && !event.composedPath().includes(this)) {
       this.dismiss();
     }
   };

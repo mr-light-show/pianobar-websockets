@@ -12,6 +12,7 @@ interface Station {
 export class StationsPopup extends LitElement {
   @property({ type: Array }) stations: Station[] = [];
   @property() currentStation = '';
+  @property() currentStationId = '';
   @state() private menuOpen = false;
   
   connectedCallback() {
@@ -151,7 +152,7 @@ export class StationsPopup extends LitElement {
           
           return html`
             <button 
-              class="station-button ${station.name === this.currentStation ? 'active' : ''}"
+              class="station-button ${station.id === this.currentStationId ? 'active' : ''}"
               @click=${() => this.handleStationClick(station)}
             >
               <span class="material-icons station-icon-leading">${leadingIcon}</span>

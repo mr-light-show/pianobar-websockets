@@ -62,3 +62,6 @@ BarUiActCallback(BarUiActManageStation);
 BarUiActCallback(BarUiActVolReset);
 BarUiActCallback(BarUiActSettings);
 
+/* Switch to a station programmatically (for WebSocket use) */
+void BarUiSwitchStation (BarApp_t * const app, PianoStation_t * const station);
+

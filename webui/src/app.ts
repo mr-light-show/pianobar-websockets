@@ -9,6 +9,10 @@ import './components/volume-control';
 import './components/reconnect-button';
 import './components/bottom-toolbar';
 import './components/toast-notification';
+import './components/quickmix-modal';
+import './components/create-station-modal';
+import './components/play-station-modal';
+import './components/select-station-modal';
 
 @customElement('pianobar-app')
 export class PianobarApp extends LitElement {
@@ -26,7 +30,16 @@ export class PianobarApp extends LitElement {
   @state() private rating = 0;
   @state() private stations: any[] = [];
   @state() private currentStation = '';
+  @state() private currentStationId = '';
   @state() private songStationName = '';
+  @state() private quickMixModalOpen = false;
+  @state() private createStationModalOpen = false;
+  @state() private currentTrackToken = '';
+  @state() private creatingStationFrom: 'song' | 'artist' | null = null;
+  @state() private newStationId: string | null = null;
+  @state() private playNewStationModalOpen = false;
+  @state() private newStationName = '';
+  @state() private selectStationModalOpen = false;
   
   static styles = css`
     :host {
@@ -91,6 +104,15 @@ export class PianobarApp extends LitElement {
       this.playing = true;
       this.rating = data.rating || 0;
       this.songStationName = data.songStationName || '';
+      this.currentTrackToken = data.trackToken || '';
+      
+      // Update current station if present
+      if (data.station) {
+        this.currentStation = data.station;
+      }
+      if (data.stationId) {
+        this.currentStationId = data.stationId;
+      }
     });
     
     this.socket.on('stop', () => {
@@ -115,7 +137,19 @@ export class PianobarApp extends LitElement {
     
     this.socket.on('stations', (data) => {
       // Backend sends stations pre-sorted according to user's sort setting
+      const oldStationIds = new Set(this.stations.map(s => s.id));
       this.stations = Array.isArray(data) ? data : [];
+      
+      // If we were creating a station, find the new one
+      if (this.creatingStationFrom) {
+        const newStation = this.stations.find(s => !oldStationIds.has(s.id));
+        if (newStation) {
+          this.newStationId = newStation.id;
+          this.newStationName = newStation.name;
+          this.playNewStationModalOpen = true;
+          this.creatingStationFrom = null;
+        }
+      }
     });
     
     this.socket.on('process', (data) => {
@@ -130,6 +164,7 @@ export class PianobarApp extends LitElement {
         this.playing = data.playing || false;
         this.rating = data.song.rating || 0;
         this.songStationName = data.song.songStationName || '';
+        this.currentTrackToken = data.song.trackToken || '';
       } else {
         // No song playing
         this.albumArt = '';
@@ -140,11 +175,15 @@ export class PianobarApp extends LitElement {
         this.totalTime = 0;
         this.rating = 0;
         this.songStationName = '';
+        this.currentTrackToken = '';
       }
       
       // Update current station if present
       if (data.station) {
         this.currentStation = data.station;
+      }
+      if (data.stationId) {
+        this.currentStationId = data.stationId;
       }
       
       // Update volume and maxGain from config
@@ -225,6 +264,77 @@ export class PianobarApp extends LitElement {
   
   handleInfoUpcoming() {
     this.socket.emit('action', 'query.upcoming');
+  }
+  
+  handleInfoQuickMix() {
+    this.quickMixModalOpen = true;
+  }
+  
+  handleQuickMixSave(e: CustomEvent) {
+    const { stationIds } = e.detail;
+    this.socket.emit('station.setQuickMix', stationIds);
+    this.quickMixModalOpen = false;
+  }
+  
+  handleQuickMixCancel() {
+    this.quickMixModalOpen = false;
+  }
+  
+  handleInfoCreateStation() {
+    this.createStationModalOpen = true;
+  }
+  
+  handleCreateStationSong() {
+    this.socket.emit('station.createFrom', {
+      trackToken: this.currentTrackToken,
+      type: 'song'
+    });
+    this.creatingStationFrom = 'song';
+    this.createStationModalOpen = false;
+  }
+  
+  handleCreateStationArtist() {
+    this.socket.emit('station.createFrom', {
+      trackToken: this.currentTrackToken,
+      type: 'artist'
+    });
+    this.creatingStationFrom = 'artist';
+    this.createStationModalOpen = false;
+  }
+  
+  handleCreateStationCancel() {
+    this.createStationModalOpen = false;
+  }
+  
+  handlePlayNewStation() {
+    if (this.newStationId) {
+      this.socket.emit('station.change', this.newStationId);
+    }
+    this.playNewStationModalOpen = false;
+    this.newStationId = null;
+  }
+  
+  handleCancelPlayNewStation() {
+    this.playNewStationModalOpen = false;
+    this.newStationId = null;
+    this.showToast(`Station "${this.newStationName}" created`);
+  }
+  
+  handleInfoDeleteStation() {
+    this.selectStationModalOpen = true;
+  }
+  
+  handleStationSelectedForDelete(e: CustomEvent) {
+    const station = this.stations.find(s => s.id === e.detail.stationId);
+    if (station) {
+      this.socket.emit('station.delete', station.id);
+      this.showToast(`Deleting station "${station.name}"...`);
+      this.selectStationModalOpen = false;
+    }
+  }
+  
+  handleCancelSelectStation() {
+    this.selectStationModalOpen = false;
   }
   
   showToast(message: string) {
@@ -309,6 +419,7 @@ export class PianobarApp extends LitElement {
         <bottom-toolbar
           .stations="${this.stations}"
           currentStation="${this.currentStation}"
+          currentStationId="${this.currentStationId}"
           rating="${this.rating}"
           @love=${this.handleLove}
           @ban=${this.handleBan}
@@ -316,7 +427,41 @@ export class PianobarApp extends LitElement {
           @station-change=${this.handleStationChange}
           @info-explain=${this.handleInfoExplain}
           @info-upcoming=${this.handleInfoUpcoming}
+          @info-quickmix=${this.handleInfoQuickMix}
+          @info-create-station=${this.handleInfoCreateStation}
+          @info-delete-station=${this.handleInfoDeleteStation}
         ></bottom-toolbar>
+        
+        <quickmix-modal
+          .stations="${this.stations}"
+          ?open="${this.quickMixModalOpen}"
+          @save=${this.handleQuickMixSave}
+          @cancel=${this.handleQuickMixCancel}
+        ></quickmix-modal>
+        
+        <create-station-modal
+          ?open="${this.createStationModalOpen}"
+          @select-song=${this.handleCreateStationSong}
+          @select-artist=${this.handleCreateStationArtist}
+          @cancel=${this.handleCreateStationCancel}
+        ></create-station-modal>
+        
+        <play-station-modal
+          ?open="${this.playNewStationModalOpen}"
+          stationName="${this.newStationName}"
+          @play=${this.handlePlayNewStation}
+          @cancel=${this.handleCancelPlayNewStation}
+        ></play-station-modal>
+        
+        <select-station-modal
+          ?open="${this.selectStationModalOpen}"
+          title="Delete Station"
+          confirmText="Delete"
+          ?confirmDanger="${true}"
+          .stations="${this.stations}"
+          @station-select=${this.handleStationSelectedForDelete}
+          @cancel=${this.handleCancelSelectStation}
+        ></select-station-modal>
       ` : html`
         <reconnect-button 
           @reconnect=${this.handleReconnect}
