@@ -564,12 +564,20 @@ export class PianobarApp extends LitElement {
   }
   
   handleInfoStationMode() {
-    this.stationModeModalOpen = true;
+    if (this.currentStationId) {
+      this.stationModeModalOpen = true;
+      // Fetch modes immediately when opening modal
+      this.handleGetStationModes();
+    } else {
+      this.showToast('No station currently playing', 'error');
+    }
   }
   
-  handleGetStationModes(e: CustomEvent) {
-    this.modesLoading = true;
-    this.socket.emit('station.getModes', { stationId: e.detail.stationId });
+  handleGetStationModes() {
+    if (this.currentStationId) {
+      this.modesLoading = true;
+      this.socket.emit('station.getModes', { stationId: this.currentStationId });
+    }
   }
   
   handleSetStationMode(e: CustomEvent) {
@@ -588,34 +596,50 @@ export class PianobarApp extends LitElement {
   }
   
   handleInfoStationSeeds() {
-    this.stationSeedsModalOpen = true;
+    if (this.currentStationId) {
+      this.stationSeedsModalOpen = true;
+      // Fetch station info immediately when opening modal
+      this.handleGetStationInfo();
+    } else {
+      this.showToast('No station currently playing', 'error');
+    }
   }
   
-  handleGetStationInfo(e: CustomEvent) {
-    this.infoLoading = true;
-    this.socket.emit('station.getInfo', { stationId: e.detail.stationId });
+  handleGetStationInfo() {
+    if (this.currentStationId) {
+      this.infoLoading = true;
+      this.socket.emit('station.getInfo', { stationId: this.currentStationId });
+    }
   }
   
   handleDeleteSeed(e: CustomEvent) {
-    const { seedId, seedType, stationId } = e.detail;
-    this.socket.emit('station.deleteSeed', { seedId, seedType, stationId });
-    this.showToast('Deleting seed...');
-    // Refresh station info after a short delay
-    setTimeout(() => {
-      this.infoLoading = true;
-      this.socket.emit('station.getInfo', { stationId });
-    }, 500);
+    const { seedId, seedType } = e.detail;
+    if (this.currentStationId) {
+      this.socket.emit('station.deleteSeed', { seedId, seedType, stationId: this.currentStationId });
+      this.showToast('Deleting seed...');
+      // Refresh station info after a short delay
+      setTimeout(() => {
+        if (this.currentStationId) {
+          this.infoLoading = true;
+          this.socket.emit('station.getInfo', { stationId: this.currentStationId });
+        }
+      }, 500);
+    }
   }
   
   handleDeleteFeedback(e: CustomEvent) {
-    const { feedbackId, stationId } = e.detail;
-    this.socket.emit('station.deleteFeedback', { feedbackId, stationId });
-    this.showToast('Deleting feedback...');
-    // Refresh station info after a short delay
-    setTimeout(() => {
-      this.infoLoading = true;
-      this.socket.emit('station.getInfo', { stationId });
-    }, 500);
+    const { feedbackId } = e.detail;
+    if (this.currentStationId) {
+      this.socket.emit('station.deleteFeedback', { feedbackId, stationId: this.currentStationId });
+      this.showToast('Deleting feedback...');
+      // Refresh station info after a short delay
+      setTimeout(() => {
+        if (this.currentStationId) {
+          this.infoLoading = true;
+          this.socket.emit('station.getInfo', { stationId: this.currentStationId });
+        }
+      }, 500);
+    }
   }
   
   handleStationSeedsCancel() {
@@ -829,7 +853,8 @@ export class PianobarApp extends LitElement {
         <station-mode-modal
           ?open="${this.stationModeModalOpen}"
           ?modesLoading="${this.modesLoading}"
-          .stations="${this.stations}"
+          .currentStationId="${this.currentStationId}"
+          .currentStationName="${this.currentStation}"
           .modes="${this.stationModes}"
           @get-modes=${this.handleGetStationModes}
           @set-mode=${this.handleSetStationMode}
@@ -839,7 +864,8 @@ export class PianobarApp extends LitElement {
         <station-seeds-modal
           ?open="${this.stationSeedsModalOpen}"
           ?infoLoading="${this.infoLoading}"
-          .stations="${this.stations}"
+          .currentStationId="${this.currentStationId}"
+          .currentStationName="${this.currentStation}"
           .stationInfo="${this.stationInfo}"
           @get-info=${this.handleGetStationInfo}
           @delete-seed=${this.handleDeleteSeed}

@@ -94,6 +94,12 @@ export class InfoMenu extends LitElement {
       font-feature-settings: 'liga';
       -webkit-font-smoothing: antialiased;
     }
+    
+    .menu-divider {
+      height: 1px;
+      background: var(--outline);
+      margin: 8px 0;
+    }
   `;
   
   toggleMenu() {
@@ -169,22 +175,6 @@ export class InfoMenu extends LitElement {
           <span class="material-icons">queue_music</span>
           <span>Show upcoming songs</span>
         </button>
-        <button class="action-button" @click=${this.handleQuickMix}>
-          <span class="material-icons">library_music</span>
-          <span>Select QuickMix stations</span>
-        </button>
-        <button class="action-button" @click=${this.handleCreateStation}>
-          <span class="material-icons">add_circle</span>
-          <span>Create Station</span>
-        </button>
-        <button class="action-button" @click=${this.handleAddMusic}>
-          <span class="material-icons">library_add</span>
-          <span>Add Music to Station</span>
-        </button>
-        <button class="action-button" @click=${this.handleRenameStation}>
-          <span class="material-icons">edit</span>
-          <span>Rename Station</span>
-        </button>
         <button class="action-button" @click=${this.handleStationMode}>
           <span class="material-icons">tune</span>
           <span>Manage Station Mode</span>
@@ -193,9 +183,28 @@ export class InfoMenu extends LitElement {
           <span class="material-icons">manage_search</span>
           <span>Manage Seeds & Feedback</span>
         </button>
+        
+        <div class="menu-divider"></div>
+        
+        <button class="action-button" @click=${this.handleQuickMix}>
+          <span class="material-icons">library_music</span>
+          <span>Set QuickMix stations</span>
+        </button>
+        <button class="action-button" @click=${this.handleCreateStation}>
+          <span class="material-icons">add_circle</span>
+          <span>Create station</span>
+        </button>
         <button class="action-button" @click=${this.handleAddGenre}>
           <span class="material-icons">library_music</span>
-          <span>Add genre station</span>
+          <span>Create genre station</span>
+        </button>
+        <button class="action-button" @click=${this.handleAddMusic}>
+          <span class="material-icons">library_add</span>
+          <span>Add music to station</span>
+        </button>
+        <button class="action-button" @click=${this.handleRenameStation}>
+          <span class="material-icons">edit</span>
+          <span>Rename station</span>
         </button>
         <button class="action-button delete" @click=${this.handleDeleteStation}>
           <span class="material-icons">delete</span>

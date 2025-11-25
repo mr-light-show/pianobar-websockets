@@ -17,13 +17,11 @@ interface StationMode {
 
 @customElement('station-mode-modal')
 export class StationModeModal extends ModalBase {
-  @property({ type: Array }) stations: Station[] = [];
+  @property({ type: String }) currentStationId: string = '';
+  @property({ type: String }) currentStationName: string = '';
   @property({ type: Array }) modes: StationMode[] = [];
   @property({ type: Boolean}) modesLoading = false;
   
-  @state() private stage: 'select-station' | 'select-mode' = 'select-station';
-  @state() private selectedStationId: string | null = null;
-  @state() private selectedStationName: string = '';
   @state() private selectedModeId: number | null = null;
   
   constructor() {
@@ -31,26 +29,12 @@ export class StationModeModal extends ModalBase {
     this.title = 'Manage Station Mode';
   }
   
-  handleStationSelect(stationId: string, stationName: string) {
-    this.selectedStationId = stationId;
-    this.selectedStationName = stationName;
-  }
-  
-  handleNext() {
-    if (this.selectedStationId) {
-      this.stage = 'select-mode';
-      this.title = `Station Mode: ${this.selectedStationName}`;
-      // Emit event to request modes
-      this.dispatchEvent(new CustomEvent('get-modes', {
-        detail: { stationId: this.selectedStationId }
-      }));
+  updated(changedProperties: Map<string, any>) {
+    super.updated(changedProperties);
+    // Update title when station name changes
+    if (changedProperties.has('currentStationName') && this.currentStationName) {
+      this.title = `Station Mode: ${this.currentStationName}`;
     }
-  }
-  
-  handleBack() {
-    this.stage = 'select-station';
-    this.title = 'Manage Station Mode';
-    this.selectedModeId = null;
   }
   
   handleModeSelect(modeId: number) {
@@ -58,10 +42,10 @@ export class StationModeModal extends ModalBase {
   }
   
   handleSetMode() {
-    if (this.selectedStationId !== null && this.selectedModeId !== null) {
+    if (this.currentStationId && this.selectedModeId !== null) {
       this.dispatchEvent(new CustomEvent('set-mode', {
         detail: { 
-          stationId: this.selectedStationId,
+          stationId: this.currentStationId,
           modeId: this.selectedModeId
         }
       }));
@@ -69,10 +53,6 @@ export class StationModeModal extends ModalBase {
   }
   
   protected onCancel() {
-    this.stage = 'select-station';
-    this.title = 'Manage Station Mode';
-    this.selectedStationId = null;
-    this.selectedStationName = '';
     this.selectedModeId = null;
   }
   
@@ -81,43 +61,6 @@ export class StationModeModal extends ModalBase {
     css`
     .modal {
       max-width: 600px;
-    }
-    
-    .station-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      max-height: 400px;
-      overflow-y: auto;
-    }
-    
-    .station-item {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 12px;
-      background: var(--surface-variant);
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.2s;
-      user-select: none;
-    }
-    
-    .station-item:hover {
-      background: var(--surface-container-high);
-    }
-    
-    .station-item label {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      cursor: pointer;
-      flex: 1;
-    }
-    
-    .station-name {
-      font-size: 14px;
-      color: var(--on-surface);
     }
     
     .modes-list {
@@ -191,47 +134,10 @@ export class StationModeModal extends ModalBase {
       line-height: 1.4;
       margin-bottom: 16px;
     }
-    
-    .back-button {
-      margin-right: auto;
-    }
   `
   ];
   
-  renderSelectStation() {
-    // Filter out QuickMix stations
-    const selectableStations = this.stations.filter(s => !s.isQuickMix);
-    
-    const body = html`
-      <div class="station-list">
-        ${selectableStations.map(station => html`
-          <div class="station-item">
-            <label>
-              <input
-                type="radio"
-                name="station-select"
-                .value=${station.id}
-                .checked=${this.selectedStationId === station.id}
-                @change=${() => this.handleStationSelect(station.id, station.name)}
-              >
-              <span class="station-name">${station.name}</span>
-            </label>
-          </div>
-        `)}
-      </div>
-    `;
-    
-    const footer = this.renderStandardFooter(
-      'Next',
-      !this.selectedStationId,
-      false,
-      () => this.handleNext()
-    );
-    
-    return this.renderModal(body, footer);
-  }
-  
-  renderSelectMode() {
+  render() {
     const body = html`
       <div class="info-note">
         Note: Changing the station mode will restart playback.
@@ -262,33 +168,14 @@ export class StationModeModal extends ModalBase {
       `}
     `;
     
-    const footer = html`
-      <div class="modal-footer">
-        <button class="button-cancel back-button" @click=${this.handleBack}>
-          Back
-        </button>
-        <button class="button-cancel" @click=${this.handleCancel}>
-          Cancel
-        </button>
-        <button 
-          class="button-confirm" 
-          ?disabled=${this.selectedModeId === null || this.modesLoading}
-          @click=${this.handleSetMode}
-        >
-          Set Mode
-        </button>
-      </div>
-    `;
+    const footer = this.renderStandardFooter(
+      'Set Mode',
+      this.selectedModeId === null || this.modesLoading,
+      false,
+      () => this.handleSetMode()
+    );
     
     return this.renderModal(body, footer);
-  }
-  
-  render() {
-    if (this.stage === 'select-station') {
-      return this.renderSelectStation();
-    } else {
-      return this.renderSelectMode();
-    }
   }
 }
 

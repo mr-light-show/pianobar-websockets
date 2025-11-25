@@ -11,36 +11,32 @@ cd "$BUILD_DIR"
 # Function to run pianobar with crash capture under lldb
 run_with_crash_capture() {
     local timestamp=$(date +%Y%m%d-%H%M%S)
-    local session_file="pianobar-session-${timestamp}.log"
     local crash_file="pianobar-crash-${timestamp}.log"
     local lldb_script="debug-commands.lldb"
     
     # Create lldb command script
-    cat > "$lldb_script" << 'EOF'
+    cat > "$lldb_script" << EOF
 env PIANOBAR_DEBUG=8
-settings set target.process.stop-on-crash true
 run
-thread backtrace all
+thread backtrace all > $crash_file
 quit
 EOF
     
     echo "Running pianobar with crash capture..."
-    echo "  Session log: $session_file"
-    echo "  (Debug output will display in console)"
+    echo "  (Crash backtraces will be saved if crash occurs)"
     echo ""
     
-    # Run under lldb - output to BOTH console AND log file using tee
-    lldb -s "$lldb_script" ./pianobar 2>&1 | tee "$session_file"
+    # Run under lldb - full console interaction
+    lldb -s "$lldb_script" ./pianobar
     
-    # Check if crashed by looking for stop reason in log
-    if grep -q "stop reason" "$session_file"; then
+    # Check if crash file was created and has content
+    if [ -f "$crash_file" ] && [ -s "$crash_file" ]; then
         echo ""
         echo "=== CRASH DETECTED ==="
         echo "Full backtrace saved to: $crash_file"
-        grep -A 50 "stop reason" "$session_file" > "$crash_file"
-        echo ""
-        echo "Session log: $session_file"
-        echo "Crash log: $crash_file"
+    else
+        # Remove empty crash file if no crash occurred
+        rm -f "$crash_file"
     fi
     
     # Cleanup temporary script

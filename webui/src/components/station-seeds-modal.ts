@@ -39,13 +39,11 @@ interface StationInfo {
 
 @customElement('station-seeds-modal')
 export class StationSeedsModal extends ModalBase {
-  @property({ type: Array }) stations: Station[] = [];
+  @property({ type: String }) currentStationId: string = '';
+  @property({ type: String }) currentStationName: string = '';
   @property({ type: Object }) stationInfo: StationInfo | null = null;
   @property({ type: Boolean }) infoLoading = false;
   
-  @state() private stage: 'select-station' | 'manage-seeds' = 'select-station';
-  @state() private selectedStationId: string | null = null;
-  @state() private selectedStationName: string = '';
   @state() private expandedSections: Set<string> = new Set(['artistSeeds', 'songSeeds', 'stationSeeds', 'feedback']);
   
   constructor() {
@@ -53,25 +51,12 @@ export class StationSeedsModal extends ModalBase {
     this.title = 'Manage Seeds & Feedback';
   }
   
-  handleStationSelect(stationId: string, stationName: string) {
-    this.selectedStationId = stationId;
-    this.selectedStationName = stationName;
-  }
-  
-  handleNext() {
-    if (this.selectedStationId) {
-      this.stage = 'manage-seeds';
-      this.title = `Seeds: ${this.selectedStationName}`;
-      // Emit event to request station info
-      this.dispatchEvent(new CustomEvent('get-info', {
-        detail: { stationId: this.selectedStationId }
-      }));
+  updated(changedProperties: Map<string, any>) {
+    super.updated(changedProperties);
+    // Update title when station name changes
+    if (changedProperties.has('currentStationName') && this.currentStationName) {
+      this.title = `Seeds: ${this.currentStationName}`;
     }
-  }
-  
-  handleBack() {
-    this.stage = 'select-station';
-    this.title = 'Manage Seeds & Feedback';
   }
   
   toggleSection(section: string) {
@@ -84,33 +69,29 @@ export class StationSeedsModal extends ModalBase {
   }
   
   handleDeleteSeed(seedId: string, seedType: string) {
-    if (this.selectedStationId) {
+    if (this.currentStationId) {
       this.dispatchEvent(new CustomEvent('delete-seed', {
         detail: { 
           seedId,
           seedType,
-          stationId: this.selectedStationId
+          stationId: this.currentStationId
         }
       }));
     }
   }
   
   handleDeleteFeedback(feedbackId: string) {
-    if (this.selectedStationId) {
+    if (this.currentStationId) {
       this.dispatchEvent(new CustomEvent('delete-feedback', {
         detail: { 
           feedbackId,
-          stationId: this.selectedStationId
+          stationId: this.currentStationId
         }
       }));
     }
   }
   
   protected onCancel() {
-    this.stage = 'select-station';
-    this.title = 'Manage Seeds & Feedback';
-    this.selectedStationId = null;
-    this.selectedStationName = '';
     this.expandedSections = new Set(['artistSeeds', 'songSeeds', 'stationSeeds', 'feedback']);
   }
   
@@ -121,63 +102,21 @@ export class StationSeedsModal extends ModalBase {
       max-width: 700px;
     }
     
-    .station-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      max-height: 400px;
-      overflow-y: auto;
-    }
-    
-    .station-item {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 12px;
-      background: var(--surface-variant);
-      border-radius: 8px;
-      cursor: pointer;
-      transition: background 0.2s;
-      user-select: none;
-    }
-    
-    .station-item:hover {
-      background: var(--surface-container-high);
-    }
-    
-    .station-item label {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      cursor: pointer;
-      flex: 1;
-    }
-    
-    .station-name {
-      font-size: 14px;
-      color: var(--on-surface);
-    }
-    
     .seeds-container {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 8px;
       max-height: 600px;
       overflow-y: auto;
-    }
-    
-    .section {
-      border: 1px solid var(--outline);
-      border-radius: 8px;
-      overflow: hidden;
     }
     
     .section-header {
       display: flex;
       align-items: center;
-      padding: 12px 16px;
+      padding: 12px;
       cursor: pointer;
       background: var(--surface-variant);
+      border-radius: 8px;
       transition: background 0.2s;
       user-select: none;
     }
@@ -210,7 +149,12 @@ export class StationSeedsModal extends ModalBase {
     }
     
     .section-content {
-      padding: 8px;
+      margin-left: 32px;
+      margin-top: 8px;
+      margin-bottom: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
     }
     
     .seed-item {
@@ -218,9 +162,9 @@ export class StationSeedsModal extends ModalBase {
       align-items: center;
       gap: 12px;
       padding: 12px;
-      background: var(--surface);
+      background: var(--surface-variant);
       border-radius: 8px;
-      margin-bottom: 8px;
+      margin-bottom: 4px;
     }
     
     .seed-info {
@@ -268,9 +212,9 @@ export class StationSeedsModal extends ModalBase {
       align-items: center;
       gap: 12px;
       padding: 12px;
-      background: var(--surface);
+      background: var(--surface-variant);
       border-radius: 8px;
-      margin-bottom: 8px;
+      margin-bottom: 4px;
     }
     
     .feedback-icon {
@@ -291,44 +235,10 @@ export class StationSeedsModal extends ModalBase {
       color: var(--on-surface-variant);
       font-size: 14px;
     }
-    
-    .back-button {
-      margin-right: auto;
-    }
   `
   ];
   
-  renderSelectStation() {
-    const body = html`
-      <div class="station-list">
-        ${this.stations.map(station => html`
-          <div class="station-item">
-            <label>
-              <input
-                type="radio"
-                name="station-select"
-                .value=${station.id}
-                .checked=${this.selectedStationId === station.id}
-                @change=${() => this.handleStationSelect(station.id, station.name)}
-              >
-              <span class="station-name">${station.name}</span>
-            </label>
-          </div>
-        `)}
-      </div>
-    `;
-    
-    const footer = this.renderStandardFooter(
-      'Next',
-      !this.selectedStationId,
-      false,
-      () => this.handleNext()
-    );
-    
-    return this.renderModal(body, footer);
-  }
-  
-  renderManageSeeds() {
+  render() {
     const hasAnyItems = this.stationInfo && (
       this.stationInfo.artistSeeds.length > 0 ||
       this.stationInfo.songSeeds.length > 0 ||
@@ -460,26 +370,14 @@ export class StationSeedsModal extends ModalBase {
       `}
     `;
     
-    const footer = html`
-      <div class="modal-footer">
-        <button class="button-cancel back-button" @click=${this.handleBack}>
-          Back
-        </button>
-        <button class="button-cancel" @click=${this.handleCancel}>
-          Close
-        </button>
-      </div>
-    `;
+    const footer = this.renderStandardFooter(
+      'Close',
+      false,
+      false,
+      () => this.handleCancel()
+    );
     
     return this.renderModal(body, footer);
-  }
-  
-  render() {
-    if (this.stage === 'select-station') {
-      return this.renderSelectStation();
-    } else {
-      return this.renderManageSeeds();
-    }
   }
 }
 
