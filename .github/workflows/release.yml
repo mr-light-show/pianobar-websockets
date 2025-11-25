@@ -7,14 +7,28 @@ on:
 
 jobs:
   build-ubuntu:
-    name: Build Ubuntu 24.04 Package
+    name: Build Ubuntu 24.04 Package (${{ matrix.arch }})
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: arm64
+            platform: linux/arm64
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      
+      - name: Set up QEMU for ARM64
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
         
-      - name: Install dependencies
+      - name: Install dependencies and build (AMD64)
+        if: matrix.arch == 'amd64'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -32,18 +46,48 @@ jobs:
             check \
             nodejs \
             npm
-      
-      - name: Build pianobar with WebSocket
-        run: |
+          
+          # Build pianobar
           make WEBSOCKET=1 clean
           make WEBSOCKET=1
           
-      - name: Build Web UI
-        run: |
+          # Build Web UI
           cd webui
           npm ci
           npm run build
           cd ..
+      
+      - name: Build in ARM64 container (ARM64)
+        if: matrix.arch == 'arm64'
+        run: |
+          # Build using Docker with ARM64 Ubuntu image
+          docker run --platform ${{ matrix.platform }} --rm \
+            -v $(pwd):/workspace \
+            -w /workspace \
+            ubuntu:24.04 \
+            bash -c "
+              apt-get update && \
+              apt-get install -y \
+                build-essential \
+                libao-dev \
+                libcurl4-openssl-dev \
+                libgcrypt20-dev \
+                libjson-c-dev \
+                libavcodec-dev \
+                libavformat-dev \
+                libavfilter-dev \
+                libavutil-dev \
+                libswresample-dev \
+                libwebsockets-dev \
+                check \
+                nodejs \
+                npm && \
+              make WEBSOCKET=1 clean && \
+              make WEBSOCKET=1 && \
+              cd webui && \
+              npm ci && \
+              npm run build
+            "
           
       - name: Create package structure
         run: |
@@ -76,7 +120,7 @@ jobs:
           Version: $(date +%Y.%m.%d)-$(git rev-parse --short HEAD)
           Section: sound
           Priority: optional
-          Architecture: amd64
+          Architecture: ${{ matrix.arch }}
           Depends: libao4, libcurl4, libgcrypt20, libjson-c5, libavcodec58 | libavcodec59 | libavcodec60, libavformat58 | libavformat59 | libavformat60, libwebsockets16 | libwebsockets17 | libwebsockets19
           Maintainer: Pianobar WebSockets <pianobar-websockets@github.com>
           Homepage: https://github.com/mr-light-show/pianobar-websockets
@@ -118,7 +162,7 @@ jobs:
       - name: Build .deb package
         run: |
           VERSION=$(date +%Y.%m.%d)-$(git rev-parse --short HEAD)
-          dpkg-deb --build package pianobar-websockets_${VERSION}_amd64.deb
+          dpkg-deb --build package pianobar-websockets_${VERSION}_${{ matrix.arch }}.deb
           
       - name: Upload to release
         if: github.event_name == 'release'
