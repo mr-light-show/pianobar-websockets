@@ -69,6 +69,7 @@ jobs:
               apt-get update && \
               apt-get install -y \
                 build-essential \
+                pkg-config \
                 libao-dev \
                 libcurl4-openssl-dev \
                 libgcrypt20-dev \
