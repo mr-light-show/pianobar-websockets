@@ -12,8 +12,8 @@ on:
 
 jobs:
   build-ubuntu:
-    name: Build Ubuntu 22.04 Package
-    runs-on: ubuntu-22.04
+    name: Build Ubuntu 24.04 Package
+    runs-on: ubuntu-24.04
     
     steps:
       - name: Checkout code
@@ -34,6 +34,7 @@ jobs:
             libavutil-dev \
             libswresample-dev \
             libwebsockets-dev \
+            check \
             nodejs \
             npm
       
@@ -128,7 +129,7 @@ jobs:
         if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
-          name: pianobar-websockets-ubuntu22.04
+          name: pianobar-websockets-ubuntu24.04
           path: pianobar-websockets_*.deb
           retention-days: 30
           
