@@ -469,7 +469,13 @@ static void BarMainLoop (BarApp_t *app) {
 		}
 		#endif
 
-		BarMainHandleUserInput (app);
+		#ifdef WEBSOCKET_ENABLED
+		if (app->settings.uiMode != BAR_UI_MODE_WEB) {
+		#endif
+			BarMainHandleUserInput (app);
+		#ifdef WEBSOCKET_ENABLED
+		}
+		#endif
 
 		/* show time */
 		if (BarPlayerGetMode (player) == PLAYER_PLAYING) {
@@ -507,9 +513,6 @@ int main (int argc, char **argv) {
 
 	memset (&app, 0, sizeof (app));
 
-	/* save terminal attributes, before disabling echoing */
-	BarTermInit ();
-
 	/* signals */
 	signal (SIGPIPE, SIG_IGN);
 	BarMainSetupSigaction ();
@@ -524,6 +527,27 @@ int main (int argc, char **argv) {
 	BarSettingsInit (&app.settings);
 	BarSettingsRead (&app.settings);
 
+	#ifdef WEBSOCKET_ENABLED
+	/* Daemonize EARLY if running in web-only mode - before any terminal/stdin setup */
+	if (app.settings.uiMode == BAR_UI_MODE_WEB) {
+		if (!BarDaemonize(&app)) {
+			fprintf(stderr, "Failed to daemonize\n");
+			return 1;
+		}
+		/* After daemonization, we're in the child process */
+		/* Parent has already exited, child continues here */
+	}
+	#endif
+
+	/* save terminal attributes, before disabling echoing */
+	#ifdef WEBSOCKET_ENABLED
+	if (app.settings.uiMode != BAR_UI_MODE_WEB) {
+	#endif
+		BarTermInit ();
+	#ifdef WEBSOCKET_ENABLED
+	}
+	#endif
+
 	PianoReturn_t pret;
 	if ((pret = PianoInit (&app.ph, app.settings.partnerUser,
 			app.settings.partnerPassword, app.settings.device,
@@ -533,15 +557,21 @@ int main (int argc, char **argv) {
 		return 0;
 	}
 
-	BarUiMsg (&app.settings, MSG_NONE,
-			"Welcome to " PACKAGE " (" VERSION ")! ");
-	if (app.settings.keys[BAR_KS_HELP] == BAR_KS_DISABLED) {
-		BarUiMsg (&app.settings, MSG_NONE, "\n");
-	} else {
+	#ifdef WEBSOCKET_ENABLED
+	if (app.settings.uiMode != BAR_UI_MODE_WEB) {
+	#endif
 		BarUiMsg (&app.settings, MSG_NONE,
-				"Press %c for a list of commands.\n",
-				app.settings.keys[BAR_KS_HELP]);
+				"Welcome to " PACKAGE " (" VERSION ")! ");
+		if (app.settings.keys[BAR_KS_HELP] == BAR_KS_DISABLED) {
+			BarUiMsg (&app.settings, MSG_NONE, "\n");
+		} else {
+			BarUiMsg (&app.settings, MSG_NONE,
+					"Press %c for a list of commands.\n",
+					app.settings.keys[BAR_KS_HELP]);
+		}
+	#ifdef WEBSOCKET_ENABLED
 	}
+	#endif
 
 	curl_global_init (CURL_GLOBAL_DEFAULT);
 	app.http = curl_easy_init ();
@@ -549,42 +579,44 @@ int main (int argc, char **argv) {
 
 	/* init fds */
 	FD_ZERO(&app.input.set);
-	app.input.fds[0] = STDIN_FILENO;
-	FD_SET(app.input.fds[0], &app.input.set);
-
-	/* open fifo read/write so it won't EOF if nobody writes to it */
-	assert (sizeof (app.input.fds) / sizeof (*app.input.fds) >= 2);
-	app.input.fds[1] = open (app.settings.fifo, O_RDWR);
-	if (app.input.fds[1] != -1) {
-		struct stat s;
-
-		/* check for file type, must be fifo */
-		fstat (app.input.fds[1], &s);
-		if (!S_ISFIFO (s.st_mode)) {
-			BarUiMsg (&app.settings, MSG_ERR, "File at %s is not a fifo\n", app.settings.fifo);
-			close (app.input.fds[1]);
-			app.input.fds[1] = -1;
-		} else {
-			FD_SET(app.input.fds[1], &app.input.set);
-			BarUiMsg (&app.settings, MSG_INFO, "Control fifo at %s opened\n",
-					app.settings.fifo);
-		}
-	}
-	app.input.maxfd = app.input.fds[0] > app.input.fds[1] ? app.input.fds[0] :
-			app.input.fds[1];
-	++app.input.maxfd;
 
 	#ifdef WEBSOCKET_ENABLED
-	/* Daemonize if running in web-only mode */
-	if (app.settings.uiMode == BAR_UI_MODE_WEB) {
-		if (!BarDaemonize(&app)) {
-			BarUiMsg (&app.settings, MSG_ERR, "Failed to daemonize\n");
-			return 1;
+	if (app.settings.uiMode != BAR_UI_MODE_WEB) {
+	#endif
+		app.input.fds[0] = STDIN_FILENO;
+		FD_SET(app.input.fds[0], &app.input.set);
+		
+		/* open fifo read/write so it won't EOF if nobody writes to it */
+		assert (sizeof (app.input.fds) / sizeof (*app.input.fds) >= 2);
+		app.input.fds[1] = open (app.settings.fifo, O_RDWR);
+		if (app.input.fds[1] != -1) {
+			struct stat s;
+			
+			/* check for file type, must be fifo */
+			fstat (app.input.fds[1], &s);
+			if (!S_ISFIFO (s.st_mode)) {
+				BarUiMsg (&app.settings, MSG_ERR, "File at %s is not a fifo\n", app.settings.fifo);
+				close (app.input.fds[1]);
+				app.input.fds[1] = -1;
+			} else {
+				FD_SET(app.input.fds[1], &app.input.set);
+				BarUiMsg (&app.settings, MSG_INFO, "Control fifo at %s opened\n",
+						app.settings.fifo);
+			}
 		}
-		/* After daemonization, we're in the child process */
-		/* Parent has already exited, child continues here */
+		app.input.maxfd = app.input.fds[0] > app.input.fds[1] ? app.input.fds[0] :
+				app.input.fds[1];
+		++app.input.maxfd;
+	#ifdef WEBSOCKET_ENABLED
+	} else {
+		/* Web-only mode: no stdin/FIFO needed */
+		app.input.fds[0] = -1;
+		app.input.fds[1] = -1;
+		app.input.maxfd = 0;
 	}
-	
+	#endif
+
+	#ifdef WEBSOCKET_ENABLED
 	/* Initialize WebSocket server if enabled */
 	if (app.settings.uiMode != BAR_UI_MODE_CLI) {
 		if (!BarWebsocketInit(&app)) {
@@ -624,7 +656,13 @@ int main (int argc, char **argv) {
 	BarSettingsDestroy (&app.settings);
 
 	/* restore terminal attributes, zsh doesn't need this, bash does... */
-	BarTermRestore ();
+	#ifdef WEBSOCKET_ENABLED
+	if (app.settings.uiMode != BAR_UI_MODE_WEB) {
+	#endif
+		BarTermRestore ();
+	#ifdef WEBSOCKET_ENABLED
+	}
+	#endif
 
 	return 0;
 }
