@@ -232,7 +232,7 @@ Configuration
 
 Add these settings to your ``~/.config/pianobar/config``::
 
-	websocket_enabled = 1
+	ui_mode = websocket
 	websocket_port = 8080
 	webui_path = ./dist/webui
 
