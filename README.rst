@@ -1,10 +1,19 @@
 pianobar
 ========
 
+.. image:: https://github.com/mr-light-show/pianobar-websockets/actions/workflows/release.yml/badge.svg
+   :target: https://github.com/mr-light-show/pianobar-websockets/actions
+   :alt: Build Status
+
 pianobar is a free/open-source, console-based client for the personalized
 online radio Pandora_.
 
 .. _Pandora: http://www.pandora.com
+
+.. note::
+   This is a fork of the original pianobar with WebSocket support for custom UIs.
+   See the `WebSocket Support`_ section below for details.
+   Original repository: https://github.com/PromyLOPh/pianobar
 
 .. image:: https://6xq.net/pianobar/pianobar-screenshot.png
     :target: https://6xq.net/pianobar/pianobar-screenshot.png
@@ -18,6 +27,8 @@ Features
 - upcoming songs/song history
 - customize keybindings and text output (see `configuration example`_)
 - remote control and eventcmd interface (send tracks to last.fm_, for example)
+- WebSocket API for building custom UIs (web, mobile, desktop)
+- included modern web UI built with Lit components
 - proxy support for listeners outside the USA
 
 .. _last.fm: https://www.last.fm
@@ -191,13 +202,279 @@ Or install it to ``/usr/local`` by issuing::
 
 	gmake install
 
+WebSocket Support
+-----------------
+
+This fork adds WebSocket support, enabling real-time communication for custom user
+interfaces. Build web, mobile, or desktop UIs that control pianobar and receive
+live updates.
+
+Features
+++++++++
+
+- Real-time playback state updates
+- Song metadata (title, artist, album, art URL)
+- Station management (list, create, delete, switch)
+- Playback control (play, pause, skip, volume)
+- Song actions (love, ban, tired, create station)
+- Two-way communication via Socket.IO protocol
+
+Building with WebSocket Support
+++++++++++++++++++++++++++++++++
+
+To build pianobar with WebSocket support enabled::
+
+	make WEBSOCKET=1 clean && make WEBSOCKET=1
+
+Or use the included build script for development::
+
+	./build.sh        # Standard build with WebSocket
+	./build.sh debug  # Debug build with crash capture
+
+Configuration
++++++++++++++
+
+Add these settings to your ``~/.config/pianobar/config``::
+
+	ui_mode = both
+	websocket_port = 8080
+	webui_path = ./dist/webui
+
+UI mode options:
+
+- ``cli``: Command-line interface only, no WebSocket
+- ``web``: Web-only (daemonizes, runs in background)
+- ``both``: Both CLI and WebSocket (default, runs in foreground)
+
+When using ``web`` mode, pianobar runs as a daemon and you should specify::
+
+	ui_mode = web
+	websocket_port = 8080
+	webui_path = ./dist/webui
+	pid_file = /tmp/pianobar.pid
+	log_file = /tmp/pianobar.log
+
+Then start pianobar and it will run in the background. Open ``http://localhost:8080`` in your browser.
+
+Included Web UI
++++++++++++++++
+
+A modern, lightweight web interface is included:
+
+- Built with Lit web components (5KB framework)
+- Material Design styling with dark mode
+- Real-time updates via WebSocket
+- Mobile-responsive design
+- Album art display
+- Volume control and playback controls
+- Station management
+
+See ``webui/README.md`` for development and build instructions.
+
+Building Custom UIs
++++++++++++++++++++
+
+The WebSocket API uses Socket.IO and provides events for:
+
+**Client → Server (Commands)**::
+
+	- play, pause, skip
+	- love_song, ban_song, tired_song
+	- set_volume
+	- list_stations, play_station
+	- create_station, delete_station
+
+**Server → Client (Events)**::
+
+	- state_update: Playback state changes
+	- song_update: New song metadata
+	- station_update: Station list changes
+	- volume_update: Volume changes
+
+Connect to ``ws://localhost:8080`` using any Socket.IO client library.
+Full protocol documentation available in ``WEBSOCKET_PROTOCOL.md``.
+
+For more information, see:
+
+- Web UI development: ``webui/README.md``
+- WebSocket protocol: ``WEBSOCKET_PROTOCOL.md``
+- Original repository: https://github.com/PromyLOPh/pianobar
+
 FAQ
 ---
+*How can I have pianobar use port 80 on Ubuntu?*
 
-The audio output does not work as expected. What can I do?
+Port 80 is a privileged port (below 1024) and requires special permissions. Here are your options:
+
+**Option 1: Use setcap (Recommended for development/home use)**
+
+Grant pianobar permission to bind to privileged ports without running as root:
+
+.. code:: bash
+
+    # Give pianobar capability to bind to privileged ports
+    sudo setcap 'cap_net_bind_service=+ep' /usr/local/bin/pianobar
+    
+    # Verify it worked
+    getcap /usr/local/bin/pianobar
+
+Then configure ``~/.config/pianobar/config``:
+
+.. code:: ini
+
+    websocket_port = 80
+    websocket_host = 0.0.0.0
+
+Note: You'll need to reapply ``setcap`` after each pianobar upgrade/rebuild.
+
+**Option 2: Port forwarding with iptables**
+
+Keep pianobar on a high port and forward port 80 to it:
+
+.. code:: bash
+
+    # Forward port 80 to port 8080
+    sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
+    
+    # Make persistent
+    sudo apt install iptables-persistent
+    sudo netfilter-persistent save
+
+Configure ``~/.config/pianobar/config``:
+
+.. code:: ini
+
+    websocket_port = 8080
+    websocket_host = 0.0.0.0
+
+Access at ``http://your-ip/`` (externally routes to port 8080 internally).
+
+**Option 3: Reverse proxy with nginx (Recommended for production)**
+
+Install and configure nginx:
+
+.. code:: bash
+
+    sudo apt install nginx
+
+Create ``/etc/nginx/sites-available/pianobar``:
+
+.. code:: nginx
+
+    server {
+        listen 80;
+        server_name localhost;
+        
+        location / {
+            proxy_pass http://127.0.0.1:8080;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+        }
+    }
+
+Enable the site:
+
+.. code:: bash
+
+    sudo ln -s /etc/nginx/sites-available/pianobar /etc/nginx/sites-enabled/
+    sudo nginx -t
+    sudo systemctl restart nginx
+
+Configure ``~/.config/pianobar/config``:
+
+.. code:: ini
+
+    websocket_port = 8080
+    websocket_host = 127.0.0.1
+
+This provides better security, logging, and SSL support. Note that ``websocket_host`` is set to ``127.0.0.1`` so only nginx can access pianobar directly.
+
+*How can I run pianobar in web mode as a daemon on system startup?*
+
+You can use systemd to automatically start pianobar in daemon mode on boot. This works identically on both headless and GUI Ubuntu installations.
+
+**Step 1: Configure pianobar for daemon mode**
+
+Create or edit ``~/.config/pianobar/config``:
+
+.. code:: ini
+
+    # Pandora credentials
+    user = your_email@example.com
+    password = your_password
+    
+    # Daemon mode settings
+    ui_mode = web
+    websocket_port = 8080
+    websocket_host = 127.0.0.1
+    
+    # Daemon-specific settings
+    pid_file = /tmp/pianobar.pid
+    log_file = ~/.config/pianobar/pianobar.log
+
+**Step 2: Create systemd user service**
+
+Create ``~/.config/systemd/user/pianobar.service``:
+
+.. code:: ini
+
+    [Unit]
+    Description=Pianobar WebSocket Daemon
+    After=network.target
+    
+    [Service]
+    Type=forking
+    ExecStart=/usr/local/bin/pianobar
+    Restart=on-failure
+    RestartSec=10
+    StandardOutput=journal
+    StandardError=journal
+    
+    [Install]
+    WantedBy=default.target
+
+**Step 3: Enable and start the service**
+
+.. code:: bash
+
+    # Reload systemd configuration
+    systemctl --user daemon-reload
+    
+    # Enable service to start on boot
+    systemctl --user enable pianobar
+    
+    # Start service now
+    systemctl --user start pianobar
+    
+    # Check status
+    systemctl --user status pianobar
+
+**Managing the daemon:**
+
+.. code:: bash
+
+    # View logs in real-time
+    journalctl --user -u pianobar -f
+    
+    # Stop the service
+    systemctl --user stop pianobar
+    
+    # Restart the service
+    systemctl --user restart pianobar
+    
+    # Disable autostart
+    systemctl --user disable pianobar
+
+Access the web interface at ``http://localhost:8080/`` (or use your server's IP if ``websocket_host`` is set to ``0.0.0.0``).
+
+*The audio output does not work as expected. What can I do?*
+
     pianobar uses libao and most problems are related to a broken libao
     configuration. Have a look at issue `#167`_ for example.
-Can I donate money? Do you have a Flattr/Bitcoin/… account?
+*Can I donate money? Do you have a Flattr/Bitcoin/… account?*
+
     No, money is not necessary to continue working on pianobar. There are many
     other ways to support pianobar: Reporting bugs, creating `cool stuff`_
     based on pianobar, blogging about it and the most important one: Keeping
