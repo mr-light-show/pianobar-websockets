@@ -411,6 +411,7 @@ bool BarWebsocketInit(BarApp_t *app) {
 #endif
 	
 	info.port = app->settings.websocketPort;
+	info.iface = app->settings.websocketHost ? app->settings.websocketHost : "0.0.0.0";
 	info.protocols = protocols;
 	info.user = app;
 	info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;

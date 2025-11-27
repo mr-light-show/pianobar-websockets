@@ -463,8 +463,6 @@ void BarSettingsRead (BarSettings_t *settings) {
 			} else if (streq ("websocket_host", key)) {
 				free (settings->websocketHost);
 				settings->websocketHost = strdup (val);
-			} else if (streq ("webui_enabled", key)) {
-				settings->webuiEnabled = (atoi (val) != 0);
 			} else if (streq ("webui_path", key)) {
 				free (settings->webuiPath);
 				settings->webuiPath = strdup (val);

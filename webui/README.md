@@ -44,9 +44,9 @@ Outputs to `../dist/webui/` - these files are served by pianobar's HTTP server.
 
 Make sure your `~/.config/pianobar/config` includes:
 ```
-websocket_enabled=1
-websocket_port=8080
-webui_path=./dist/webui
+ui_mode = both
+websocket_port = 8080
+webui_path = ./dist/webui
 ```
 
 Then start pianobar:

@@ -344,7 +344,6 @@ password = your_password
 ui_mode = both          # Options: cli, web, both (default: both)
 websocket_port = 8080
 websocket_host = 0.0.0.0
-webui_enabled = 1
 webui_path = ./dist/webui
 
 # Optional: Logging
@@ -364,7 +363,6 @@ password = your_password
 ui_mode = web
 websocket_port = 8080
 websocket_host = 0.0.0.0
-webui_enabled = 1
 webui_path = ./dist/webui
 
 # Required for daemon mode

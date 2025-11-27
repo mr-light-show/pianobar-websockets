@@ -127,11 +127,12 @@ These options are only available when pianobar is compiled with `WEBSOCKET_ENABL
 |--------|---------|-------------|
 | `ui_mode` | `both` | UI mode: `cli` (CLI only), `web` (headless daemon), or `both` (CLI+WebSocket) |
 | `websocket_port` | (none) | WebSocket server port (e.g., `9001`) - **required** for web UI |
-| `websocket_host` | `127.0.0.1` | WebSocket bind address (use `0.0.0.0` for all interfaces) |
-| `webui_enabled` | `false` | Enable built-in web UI server |
+| `websocket_host` | `0.0.0.0` | WebSocket bind address (use `127.0.0.1` for localhost only) |
 | `webui_path` | (none) | Custom path to web UI files (defaults to built-in) |
 | `pid_file` | (none) | Path to PID file for daemon mode |
 | `log_file` | (none) | Path to log file for daemon mode |
+
+**Security Note:** By default, `websocket_host` is set to `0.0.0.0`, which binds the web interface to all network interfaces, making it accessible from remote machines. The web interface has no built-in authentication. For localhost-only access, set `websocket_host = 127.0.0.1` in your config. Consider using a firewall to restrict access to trusted IP addresses when exposing the interface remotely.
 
 **Note on `ui_mode` values:**
 - `cli`: Traditional command-line interface only, WebSocket disabled
@@ -147,11 +148,12 @@ When using `ui_mode = web`, you should also configure:
 ```ini
 ui_mode = both
 websocket_port = 9001
-websocket_host = 127.0.0.1
 webui_enabled = 1
+# websocket_host = 0.0.0.0  # Default - accessible from remote machines
+# websocket_host = 127.0.0.1  # Localhost only - more secure
 ```
 
-Access the web interface at `http://127.0.0.1:9001/`
+Access the web interface at `http://YOUR_IP:9001/` or `http://localhost:9001/`
 
 ## Keybindings
 
@@ -245,7 +247,6 @@ max_gain = 10
 # WebSocket/Web UI (optional)
 ui_mode = both
 websocket_port = 9001
-webui_enabled = 1
 
 # Event script for notifications (optional)
 event_command = /home/user/.config/pianobar/eventcmd

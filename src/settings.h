@@ -123,7 +123,6 @@ typedef struct {
 	BarUiMode_t uiMode;
 	int websocketPort;
 	char *websocketHost;
-	bool webuiEnabled;
 	char *webuiPath;
 	char *pidFile;
 	char *logFile;

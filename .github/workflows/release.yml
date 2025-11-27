@@ -196,7 +196,7 @@ jobs:
       - name: Build .deb package
         run: |
           VERSION=$(date +%Y.%m.%d)-$(git rev-parse --short HEAD)
-          dpkg-deb --build package pianobar-websockets_${VERSION}_${{ matrix.arch }}.deb
+          dpkg-deb --build package pianobar-websockets_${{ matrix.arch }}.deb
           
       - name: Upload to release
         if: github.event_name == 'release'
@@ -363,7 +363,7 @@ jobs:
         run: |
           VERSION=$(date +%Y.%m.%d)-$(git rev-parse --short HEAD)
           APP_NAME="Pianobar-WebSockets-${VERSION}"
-          DMG_NAME="pianobar-websockets_${VERSION}_macos14.dmg"
+          DMG_NAME="pianobar-websockets_macos14.dmg"
           
           create-dmg \
             --volname "Pianobar WebSockets" \
