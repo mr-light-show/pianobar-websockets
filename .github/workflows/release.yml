@@ -230,7 +230,7 @@ jobs:
       - name: Build pianobar with WebSocket
         run: |
           make WEBSOCKET=1 clean
-          make WEBSOCKET=1
+          make WEBSOCKET=1 CFLAGS="-g -O0 -DWEBSOCKET_ENABLED"
           
       - name: Build Web UI
         run: |
