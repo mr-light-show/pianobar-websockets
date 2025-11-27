@@ -20,6 +20,11 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
+/* Enable POSIX functions on Linux (not needed on macOS/BSD) */
+#if !defined(_XOPEN_SOURCE) && !defined(__APPLE__) && !defined(__FreeBSD__)
+#define _XOPEN_SOURCE 600  /* Enable POSIX functions */
+#endif
+
 #include "../../main.h"
 #include "../../debug.h"
 #include "websocket.h"
