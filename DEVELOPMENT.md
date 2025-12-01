@@ -712,6 +712,31 @@ websocket_port = 8081
 
 ---
 
+## Git Hooks Setup
+
+To prevent `package-lock.json` sync issues, install the pre-commit hook:
+
+```bash
+cp contrib/git-hooks/pre-commit .git/hooks/pre-commit
+chmod +x .git/hooks/pre-commit
+```
+
+This hook validates that `webui/package-lock.json` is in sync with `webui/package.json` before allowing commits. When you try to commit changes to `package.json` without the corresponding `package-lock.json` updates, the commit will be blocked with instructions on how to fix it.
+
+**How it works:**
+- Runs automatically before each commit
+- Checks if `webui/package.json` is being committed
+- Verifies `webui/package-lock.json` is also staged
+- Validates the lock file is in sync using `npm ls`
+- Provides clear error messages if validation fails
+
+**To bypass the hook** (not recommended):
+```bash
+git commit --no-verify
+```
+
+---
+
 ## Additional Resources
 
 - [WebSocket Plans](WEBSOCKET_WEB_INTERFACE_PLAN.md)
