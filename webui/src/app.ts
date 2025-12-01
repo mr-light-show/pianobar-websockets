@@ -305,7 +305,9 @@ export class PianobarApp extends LitElement {
         this.albumArt = '';
         this.songTitle = 'Not Playing';
         this.albumName = '';
-        this.artistName = '—';
+        // Check if a station is selected - if not, show helpful message
+        const hasStation = data.station && data.station !== '';
+        this.artistName = hasStation ? '—' : 'Select a station to play';
         this.playing = false;
         this.currentTime = 0;
         this.totalTime = 0;
