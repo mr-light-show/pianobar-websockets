@@ -220,11 +220,11 @@ export class PianobarApp extends LitElement {
       this.songStationName = data.songStationName || '';
       this.currentTrackToken = data.trackToken || '';
       
-      // Update current station if present
-      if (data.station) {
+      // Update current station (even if empty)
+      if ('station' in data) {
         this.currentStation = data.station;
       }
-      if (data.stationId) {
+      if ('stationId' in data) {
         this.currentStationId = data.stationId;
       }
     });
@@ -314,11 +314,11 @@ export class PianobarApp extends LitElement {
         this.currentTrackToken = '';
       }
       
-      // Update current station if present
-      if (data.station) {
+      // Update current station (even if empty)
+      if ('station' in data) {
         this.currentStation = data.station;
       }
-      if (data.stationId) {
+      if ('stationId' in data) {
         this.currentStationId = data.stationId;
       }
       
