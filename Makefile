@@ -32,7 +32,8 @@ PIANOBAR_SRC:=\
 		${PIANOBAR_DIR}/ui_act.c \
 		${PIANOBAR_DIR}/ui.c \
 		${PIANOBAR_DIR}/ui_readline.c \
-		${PIANOBAR_DIR}/ui_dispatch.c
+		${PIANOBAR_DIR}/ui_dispatch.c \
+		${PIANOBAR_DIR}/websocket_bridge.c
 
 # WebSocket support (conditional compilation)
 WEBSOCKET?=0
