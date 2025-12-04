@@ -469,6 +469,16 @@ void BarSocketIoEmitStations(BarApp_t *app) {
 		return;
 	}
 	
+	/* Check if stations are available */
+	if (!app->ph.stations) {
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: No stations available yet\n");
+		/* Send empty stations array */
+		stations = json_object_new_array();
+		BarSocketIoEmit("stations", stations);
+		json_object_put(stations);
+		return;
+	}
+	
 	/* Sort stations using configured sort order */
 	sortedStations = BarSortedStations(app->ph.stations, &stationCount,
 	                                   app->settings.sortOrder);
