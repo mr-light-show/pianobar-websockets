@@ -414,8 +414,9 @@ export class CreateStationModal extends ModalBase {
         <button class="option-button" @click=${this.handleBrowseGenres}>
           <div class="option-main">
             <span class="material-icons">library_music</span>
-            <span>Select Genre</span>
+            <span>Genre</span>
           </div>
+          <div class="option-detail">Select a genre</div>
         </button>
       </div>
     `;
