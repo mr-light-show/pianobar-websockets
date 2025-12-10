@@ -31,6 +31,7 @@ export class CreateStationModal extends ModalBase {
   @state() private expandedCategories: Set<string> = new Set();
   @state() private selectedMusicId: string | null = null;
   @state() private selectedSource: 'song' | 'artist' | 'search' | null = null;
+  @state() private sharedStationId: string = '';
   
   constructor() {
     super();
@@ -94,12 +95,37 @@ export class CreateStationModal extends ModalBase {
     }
   }
   
+  handleSharedStationInput(e: Event) {
+    const input = e.target as HTMLInputElement;
+    // Only allow digits
+    const value = input.value.replace(/[^0-9]/g, '');
+    this.sharedStationId = value;
+    input.value = value;
+  }
+  
+  handleSharedStationKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Enter' && this.sharedStationId.trim()) {
+      this.handleAddSharedStation();
+    }
+  }
+  
+  handleAddSharedStation() {
+    if (!this.sharedStationId.trim()) {
+      return;
+    }
+    
+    this.dispatchEvent(new CustomEvent('shared-station-submit', {
+      detail: { stationId: this.sharedStationId.trim() }
+    }));
+  }
+  
   protected onCancel() {
     this.mode = 'select';
     this.selectedMusicId = null;
     this.selectedSource = null;
     this.expandedCategories.clear();
     this.searchQuery = '';
+    this.sharedStationId = '';
   }
   
   static styles = [
@@ -166,6 +192,10 @@ export class CreateStationModal extends ModalBase {
     
     .search-section {
       margin-top: 16px;
+    }
+    
+    .search-section .button-confirm {
+      width: 90px;
     }
     
     .search-label {
@@ -292,6 +322,24 @@ export class CreateStationModal extends ModalBase {
             ?disabled=${!this.searchQuery.trim() || this.loading}
           >
             Search
+          </button>
+        </div>
+        
+        <div class="search-input-container" style="margin-top: 12px;">
+          <input
+            type="text"
+            class="search-input"
+            placeholder="Enter shared station ID (digits only)"
+            .value=${this.sharedStationId}
+            @input=${this.handleSharedStationInput}
+            @keydown=${this.handleSharedStationKeyDown}
+          >
+          <button 
+            class="button-confirm" 
+            @click=${this.handleAddSharedStation}
+            ?disabled=${!this.sharedStationId.trim()}
+          >
+            Add
           </button>
         </div>
       </div>

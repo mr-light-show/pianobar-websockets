@@ -501,6 +501,15 @@ export class PianobarApp extends LitElement {
     this.searchLoading = false;
   }
   
+  handleSharedStationSubmit(e: CustomEvent) {
+    const { stationId } = e.detail;
+    this.socket.emit('station.addShared', { stationId });
+    this.createStationModalOpen = false;
+    this.searchResults = { categories: [] };
+    this.searchLoading = false;
+    this.showToast('Adding shared station...');
+  }
+  
   handlePlayNewStation() {
     if (this.newStationId) {
       this.socket.emit('station.change', this.newStationId);
@@ -844,6 +853,7 @@ export class PianobarApp extends LitElement {
           @select-artist=${this.handleCreateStationArtist}
           @search=${this.handleCreateStationQuery}
           @create=${this.handleCreateStationFromSearch}
+          @shared-station-submit=${this.handleSharedStationSubmit}
           @cancel=${this.handleCreateStationCancel}
         ></create-station-modal>
         
