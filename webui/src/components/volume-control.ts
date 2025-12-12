@@ -41,17 +41,17 @@ export class VolumeControl extends LitElement {
     :host {
       display: flex;
       align-items: center;
-      gap: 1rem;
-      max-width: 32rem;
+      gap: clamp(0.5rem, 2vw, 1rem);
+      max-width: clamp(16rem, 85vw, 32rem);
       margin: 0 auto;
-      padding: 0 2rem;
+      padding: 0 clamp(1rem, 4vw, 2rem);
     }
     
     .material-icons {
       font-family: 'Material Icons';
       font-weight: normal;
       font-style: normal;
-      font-size: 24px;
+      font-size: clamp(12px, 3vw, 24px);
       line-height: 1;
       letter-spacing: normal;
       text-transform: none;
@@ -79,16 +79,16 @@ export class VolumeControl extends LitElement {
     input[type="range"]::-webkit-slider-thumb {
       -webkit-appearance: none;
       appearance: none;
-      width: 16px;
-      height: 16px;
+      width: clamp(8px, 2vw, 16px);
+      height: clamp(8px, 2vw, 16px);
       border-radius: 50%;
       background: var(--primary-color);
       cursor: pointer;
     }
     
     input[type="range"]::-moz-range-thumb {
-      width: 16px;
-      height: 16px;
+      width: clamp(8px, 2vw, 16px);
+      height: clamp(8px, 2vw, 16px);
       border-radius: 50%;
       background: var(--primary-color);
       cursor: pointer;
@@ -96,9 +96,10 @@ export class VolumeControl extends LitElement {
     }
     
     .volume-value {
-      min-width: 3rem;
+      min-width: clamp(1.5rem, 6vw, 3rem);
       text-align: right;
       color: var(--on-surface-variant);
+      font-size: clamp(0.5rem, 2vw, 0.875rem);
     }
   `;
   
