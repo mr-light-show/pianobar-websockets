@@ -11,12 +11,12 @@ export class PlaybackControls extends LitElement {
     :host {
       display: flex;
       justify-content: center;
-      gap: 1rem;
+      gap: clamp(0.5rem, 2vw, 1rem);
     }
     
     button {
-      width: 56px;
-      height: 56px;
+      width: clamp(28px, 8vw, 56px);
+      height: clamp(28px, 8vw, 56px);
       border-radius: 50%;
       border: none;
       background: var(--surface-variant);
@@ -60,7 +60,7 @@ export class PlaybackControls extends LitElement {
       font-family: 'Material Icons';
       font-weight: normal;
       font-style: normal;
-      font-size: 28px;
+      font-size: clamp(14px, 4vw, 28px);
       line-height: 1;
       letter-spacing: normal;
       text-transform: none;

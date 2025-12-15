@@ -9,7 +9,7 @@ export class AlbumArt extends LitElement {
   static styles = css`
     :host {
       display: block;
-      max-width: 32rem;
+      max-width: clamp(16rem, 85vw, 32rem);
       margin: 0 auto;
       aspect-ratio: 1 / 1;
     }
@@ -34,7 +34,7 @@ export class AlbumArt extends LitElement {
       font-family: 'Material Icons';
       font-weight: normal;
       font-style: normal;
-      font-size: 8rem;
+      font-size: clamp(4rem, 20vw, 8rem);
       line-height: 1;
       letter-spacing: normal;
       text-transform: none;

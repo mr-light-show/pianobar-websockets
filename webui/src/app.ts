@@ -75,7 +75,7 @@ export class PianobarApp extends LitElement {
       flex: 1;
       overflow-y: auto;
       overflow-x: hidden;
-      padding-bottom: 5rem;
+      padding-bottom: clamp(3rem, 10vw, 4rem);
     }
     
     .menu-container {
@@ -86,8 +86,8 @@ export class PianobarApp extends LitElement {
     }
     
     .menu-button {
-      width: 48px;
-      height: 48px;
+      width: clamp(24px, 7vw, 48px);
+      height: clamp(24px, 7vw, 48px);
       border-radius: 50%;
       border: none;
       background: var(--surface-variant);
@@ -108,12 +108,12 @@ export class PianobarApp extends LitElement {
     .song-info {
       text-align: center;
       padding: 1rem 2rem;
-      max-width: 32rem;
+      max-width: clamp(16rem, 85vw, 32rem);
       margin: 0 auto;
     }
     
     h1 {
-      font-size: 1.5rem;
+      font-size: clamp(0.875rem, 3vw, 1.5rem);
       font-weight: 500;
       margin: 0.5rem 0;
     }
@@ -121,13 +121,14 @@ export class PianobarApp extends LitElement {
     .album {
       color: var(--on-surface-variant);
       margin: 0.25rem 0 0 0;
-      font-size: 0.9rem;
+      font-size: clamp(0.5rem, 2vw, 0.9rem);
     }
     
     .artist {
       color: var(--on-surface-variant);
       margin: 0.25rem 0 0 0;
       font-style: italic;
+      font-size: clamp(0.5rem, 2vw, 0.9rem);
     }
     
     .controls-container {
@@ -144,8 +145,8 @@ export class PianobarApp extends LitElement {
     }
     
     .rating-button {
-      width: 56px;
-      height: 56px;
+      width: clamp(28px, 8vw, 56px);
+      height: clamp(28px, 8vw, 56px);
       border-radius: 50%;
       border: none;
       background: var(--surface-variant);
