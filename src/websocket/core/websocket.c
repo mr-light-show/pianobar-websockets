@@ -442,11 +442,16 @@ static void* BarWebsocketThread(void *arg) {
 	debugPrint(DEBUG_WEBSOCKET, "WebSocket: Thread started\n");
 	
 	while (ctx->threadRunning) {
-		/* Service WebSocket - handle network I/O with 50ms timeout
-		 * This means we poll buckets approximately every 50ms (20 times/second)
+		bool didWork = false;
+		
+		/* Service WebSocket - 50ms timeout
+		 * This ensures the loop runs at least every 50ms
 		 */
 		if (ctx->context) {
-			lws_service(ctx->context, 50);
+			int n = lws_service(ctx->context, 50);
+			if (n > 0) {
+				didWork = true;
+			}
 		}
 		
 		/* BUCKET POLLING - Natural Rate Limiting
@@ -475,10 +480,13 @@ static void* BarWebsocketThread(void *arg) {
 			if (msg) {
 				BarWebsocketProcessBroadcast(ctx, msg);
 				BarWsMessageFree(msg);
+				didWork = true;
 			}
 		}
 		
-		/* NOTE: Command queue processing removed - main thread handles this */
+		/* NOTE: Progress broadcasting now handled by playback_manager thread
+		 * This ensures timing is independent of WebSocket servicing delays
+		 */
 	}
 	
 	debugPrint(DEBUG_WEBSOCKET, "WebSocket: Thread stopped\n");

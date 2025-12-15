@@ -469,12 +469,10 @@ static void BarMainLoop (BarApp_t *app) {
 		BarMainPrintTime (app);
 	}
 
-	#ifdef WEBSOCKET_ENABLED
-	/* Broadcast progress to web clients in WEB and BOTH modes */
-	if (app->settings.uiMode != BAR_UI_MODE_CLI) {
-		BarWsBroadcastProgress(app);
-	}
-	#endif
+	/* NOTE: Progress broadcasting for WebSocket clients is now handled
+	 * directly in the WebSocket thread (BarWebsocketThread) with rate
+	 * limiting. This ensures it works in both "web" and "both" modes.
+	 */
 }
 
 #ifdef WEBSOCKET_ENABLED
