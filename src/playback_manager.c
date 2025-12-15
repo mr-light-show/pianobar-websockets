@@ -33,6 +33,7 @@ THE SOFTWARE.
 #include <unistd.h>
 #include <assert.h>
 #include <signal.h>
+#include <time.h>
 
 /* Forward declarations of functions from main.c */
 extern void BarMainGetPlaylist(BarApp_t *app);
@@ -79,11 +80,29 @@ static void PlaybackManagerPlayerCleanup(BarApp_t *app, pthread_t *playerThread)
 static void *BarPlaybackManagerThread(void *data) {
 	BarApp_t *app = (BarApp_t *)data;
 	pthread_t playerThread;
+	static time_t lastProgressBroadcast = 0;
 	
 	debugPrint(DEBUG_UI, "PlaybackMgr: Thread started\n");
 	
 	while (!app->doQuit && g_running) {
 		BarPlayerMode mode = BarPlayerGetMode(&app->player);
+		
+		/* Broadcast progress updates every ~1 second while playing (and not paused) */
+		{
+			time_t now = time(NULL);
+			if ((now - lastProgressBroadcast) >= 1) {
+				lastProgressBroadcast = now;
+				
+				/* Check if playing AND not paused */
+				pthread_mutex_lock(&app->player.lock);
+				bool isPaused = app->player.doPause;
+				pthread_mutex_unlock(&app->player.lock);
+				
+				if (mode == PLAYER_PLAYING && !isPaused) {
+					BarWsBroadcastProgress(app);
+				}
+			}
+		}
 		
 		/* Song finished playing - cleanup */
 		if (mode == PLAYER_FINISHED) {
