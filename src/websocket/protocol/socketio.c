@@ -667,6 +667,23 @@ void BarSocketIoEmitError(const char *operation, const char *message) {
 	json_object_put(data);
 }
 
+/* Emit 'playState' event (paused/resumed state) */
+void BarSocketIoEmitPlayState(BarApp_t *app) {
+	if (!app) {
+		return;
+	}
+	
+	json_object *data = json_object_new_object();
+	
+	pthread_mutex_lock(&app->player.lock);
+	json_object_object_add(data, "paused", 
+	                       json_object_new_boolean(app->player.doPause));
+	pthread_mutex_unlock(&app->player.lock);
+	
+	BarSocketIoEmit("playState", data);
+	json_object_put(data);
+}
+
 /* Emit 'query.upcoming.result' event (upcoming songs list) */
 void BarSocketIoEmitUpcoming(BarApp_t *app, PianoSong_t *firstSong, int maxSongs) {
 	json_object *songs, *songObj;

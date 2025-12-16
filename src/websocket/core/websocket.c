@@ -363,14 +363,12 @@ static void BarWebsocketProcessBroadcast(BarWsContext_t *ctx, BarWsMessage_t *ms
 	
 	switch (msg->type) {
 		case MSG_TYPE_BROADCAST_START:
-			/* Song started */
-			ctx->progress.isPlaying = true;
+			/* Song started - state tracked via player->mode */
 			/* TODO: Extract song data from msg->data and emit */
 			break;
 			
 	case MSG_TYPE_BROADCAST_STOP:
-		/* Song stopped */
-		ctx->progress.isPlaying = false;
+		/* Song stopped - state tracked via player->mode */
 		/* Emit stop event via Socket.IO */
 		BarSocketIoEmit("stop", NULL);
 		break;
@@ -611,9 +609,6 @@ bool BarWebsocketInit(BarApp_t *app) {
 	/* Initialize buckets */
 	BarWsBucketsInit(ctx);
 	
-	/* Initialize mutex */
-	pthread_mutex_init(&ctx->stateMutex, NULL);
-	
 	/* Initialize delayed volume broadcast */
 	ctx->delayedVolumeBroadcast.pending = false;
 	pthread_mutex_init(&ctx->volumeBroadcastMutex, NULL);
@@ -631,7 +626,6 @@ bool BarWebsocketInit(BarApp_t *app) {
 		
 		/* Cleanup on failure */
 		BarWsBucketsDestroy(ctx);
-		pthread_mutex_destroy(&ctx->stateMutex);
 		lws_context_destroy(ctx->context);
 		free(ctx->connections);
 		free(ctx);
@@ -676,7 +670,6 @@ void BarWebsocketDestroy(BarApp_t *app) {
 	/* Cleanup buckets */
 	BarWsBucketsDestroy(ctx);
 	
-	pthread_mutex_destroy(&ctx->stateMutex);
 	pthread_mutex_destroy(&ctx->volumeBroadcastMutex);
 	
 	if (ctx->connections) {
@@ -715,16 +708,8 @@ void BarWebsocketBroadcastSongStart(BarApp_t *app) {
 	
 	BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
 	
-	/* Update progress tracking */
-	pthread_mutex_lock(&ctx->stateMutex);
-	ctx->progress.isPlaying = true;
+	/* Reset progress tracking (single-threaded access, no lock needed) */
 	ctx->progress.lastBroadcast = 0;
-	
-	/* Get song duration from player */
-	if (app->player.songDuration > 0) {
-		ctx->progress.songDuration = app->player.songDuration;
-	}
-	pthread_mutex_unlock(&ctx->stateMutex);
 	
 	/* Queue start event to bucket for WebSocket thread */
 	BarWsBucketPut(ctx, MSG_TYPE_BROADCAST_START, NULL, 0);
@@ -740,10 +725,6 @@ void BarWebsocketBroadcastSongStop(BarApp_t *app) {
 	}
 	
 	BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
-	
-	pthread_mutex_lock(&ctx->stateMutex);
-	ctx->progress.isPlaying = false;
-	pthread_mutex_unlock(&ctx->stateMutex);
 	
 	/* Queue stop event to bucket for WebSocket thread */
 	BarWsBucketPut(ctx, MSG_TYPE_BROADCAST_STOP, NULL, 0);
@@ -776,28 +757,25 @@ void BarWebsocketBroadcastProgress(BarApp_t *app) {
 	BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
 	player_t *player = &app->player;
 	
-	/* Lock to safely access progress state */
-	pthread_mutex_lock(&ctx->stateMutex);
+	/* Single lock - player->lock is the source of truth
+	 * This eliminates the deadlock caused by nested locking */
+	pthread_mutex_lock(&player->lock);
 	
-	if (!ctx->progress.isPlaying) {
-		pthread_mutex_unlock(&ctx->stateMutex);
+	/* Check playing state directly from player */
+	if (player->mode != PLAYER_PLAYING || player->doPause) {
+		pthread_mutex_unlock(&player->lock);
 		return;
 	}
 	
-	/* Get current elapsed from player - same source as CLI */
-	pthread_mutex_lock(&player->lock);
 	unsigned int elapsed = player->songPlayed;
 	unsigned int duration = player->songDuration;
 	pthread_mutex_unlock(&player->lock);
 	
-	/* Only broadcast if changed */
+	/* Optimization: skip if unchanged (single-threaded access, no lock needed) */
 	if (elapsed == ctx->progress.lastBroadcast) {
-		pthread_mutex_unlock(&ctx->stateMutex);
 		return;
 	}
-	
 	ctx->progress.lastBroadcast = elapsed;
-	pthread_mutex_unlock(&ctx->stateMutex);
 	
 	/* Queue progress update to bucket for WebSocket thread */
 	unsigned int times[2] = {elapsed, duration};

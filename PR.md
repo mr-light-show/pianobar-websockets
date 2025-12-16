@@ -2,12 +2,15 @@
 
 ## Summary
 
-This PR fixes four critical issues and adds user-friendly error messages:
+This PR fixes critical issues and adds user-friendly error messages:
 1. **WebSocket Deadlock** - Application would freeze when API calls failed from WebSocket thread
-2. **Volume Slider Bounce** - Slider would jump around while dragging due to receiving its own broadcast updates
-3. **Volume Conversion Bug** - Slider would jump to wrong values due to mathematical error in `dbToSlider()`
-4. **Progress Bar Pause Bug** - Progress bar would show incorrect time on page refresh when paused
-5. **User-Friendly Error Messages** - Generic errors replaced with helpful, contextual messages
+2. **Lock Ordering Deadlock** - Eliminated potential deadlock via mutex consolidation
+3. **Volume Slider Bounce** - Slider would jump around while dragging due to receiving its own broadcast updates
+4. **Volume Conversion Bug** - Slider would jump to wrong values due to mathematical error in `dbToSlider()`
+5. **Progress Bar Pause Bug** - Progress bar would show incorrect time on page refresh when paused
+6. **CLI Play/Pause Not Syncing** - WebUI didn't update when CLI changed play/pause state
+7. **CLI Station/Rating Not Syncing** - WebUI didn't update when CLI created/deleted/renamed stations or loved/banned songs
+8. **User-Friendly Error Messages** - Generic errors replaced with helpful, contextual messages
 
 ## Problem Description
 
@@ -70,6 +73,46 @@ When operations failed, users saw unhelpful generic errors:
 - "Call not allowed" (What call? Why not?)
 - "Network error: ..." (What should I do?)
 - No visual feedback in WebUI (errors only in logs)
+
+### Issue 6: Lock Ordering Deadlock ⚠️ CRITICAL
+
+A second deadlock scenario was discovered in the progress broadcast code:
+
+**Thread A (Playback Manager):**
+```c
+pthread_mutex_lock(&app->player.lock);    // Lock player first
+// ... check pause state ...
+BarWsBroadcastProgress(app);              // Then tries stateMutex
+```
+
+**Thread B (WebSocket):**
+```c
+pthread_mutex_lock(&ctx->stateMutex);     // Lock stateMutex first
+// ...
+pthread_mutex_lock(&player->lock);        // Then tries player->lock
+```
+
+**Classic AB-BA deadlock** - if both threads run simultaneously, each holds the lock the other needs.
+
+### Issue 7: CLI Play/Pause Not Syncing to WebUI
+
+When using CLI commands (p, P, S, or space) to play/pause, the WebUI play/pause button did not update:
+- CLI toggles pause with 'p' key
+- Audio pauses correctly
+- **WebUI button still shows "pause" icon** (should show "play")
+
+**Root cause:** The play/pause action callbacks (`BarUiActPlay`, `BarUiActPause`, `BarUiActTogglePause`) did not emit a `playState` event to WebSocket clients. The event was only emitted when the action came *from* the WebSocket (not the CLI).
+
+### Issue 8: CLI Station/Rating Changes Not Syncing to WebUI
+
+When using CLI commands to modify stations or rate songs, the WebUI did not update:
+- CLI creates station with 'c' key → WebUI station list unchanged
+- CLI deletes station with 'd' key → WebUI still shows deleted station
+- CLI renames station with 'r' key → WebUI shows old name
+- CLI loves/bans song with '+'/'-' → WebUI rating indicator unchanged
+- CLI modifies QuickMix with 'x' → WebUI QuickMix selections unchanged
+
+**Root cause:** The CLI action callbacks did not emit `stations` or song update events to WebSocket clients. These events were only emitted when actions came *from* the WebSocket (not the CLI).
 
 ## Solution
 
@@ -186,6 +229,92 @@ Simplified progress tracking to use player's authoritative state:
 - ✅ Simpler code (removed ~55 lines of complex logic)
 - ✅ Player thread handles all pause/resume complexity
 
+### 6. Mutex Consolidation to Eliminate Lock Ordering Deadlock
+
+Eliminated `ctx->stateMutex` entirely - now use `player->lock` as the single source of truth.
+
+**Analysis of `BarWsProgress_t` fields:**
+| Field | Status | Replacement |
+|-------|--------|-------------|
+| `isPlaying` | Redundant | Use `player->mode == PLAYER_PLAYING` |
+| `songDuration` | Redundant | Use `player->songDuration` |
+| `lastBroadcast` | Used | Single-threaded access (no lock needed) |
+| Other fields | Dead code | Removed |
+
+**Changes:**
+- Simplified `BarWsProgress_t` to only contain `lastBroadcast`
+- Removed `ctx->stateMutex` from `BarWsContext_t`
+- Rewrote `BarWebsocketBroadcastProgress()` to use only `player->lock`
+- Simplified `BarWebsocketBroadcastSongStart/Stop()` - removed mutex calls
+
+**Benefits:**
+- ✅ **Deadlock eliminated** - only one mutex, no ordering issues
+- ✅ Simpler code - removed ~30 lines of mutex management
+- ✅ Single source of truth - player state in one place
+
+### 7. pthread_join Timeout Safety
+
+Added timeout to `pthread_join()` calls to prevent hangs when player thread is stuck on network:
+
+**New helper function:**
+```c
+static bool join_thread_with_timeout(pthread_t thread, void **retval, int timeout_secs);
+```
+
+**Behavior:**
+1. Wait up to 10 seconds for player thread to exit
+2. If timeout: force interrupt (`player->interrupted = 2`) and signal condition variable
+3. Wait 5 more seconds
+4. If still hung: `pthread_detach()` to avoid blocking (accepts thread leak to prevent deadlock)
+
+**Benefits:**
+- ✅ Application remains responsive even if player hangs
+- ✅ Graceful degradation instead of complete freeze
+
+### 8. CLI Play/Pause State Broadcast
+
+Added `BarWsBroadcastPlayState()` bridge function to emit `playState` events when CLI changes pause state.
+
+**New functions:**
+- `BarSocketIoEmitPlayState(app)` - Emits `{"paused": true/false}` to all clients
+- `BarWsBroadcastPlayState(app)` - Bridge function (no-op when WebSocket disabled)
+
+**Updated callbacks in `ui_act.c`:**
+- `BarUiActPlay()` - Now calls `BarWsBroadcastPlayState(app)`
+- `BarUiActPause()` - Now calls `BarWsBroadcastPlayState(app)`
+- `BarUiActTogglePause()` - Now calls `BarWsBroadcastPlayState(app)`
+
+**Benefits:**
+- ✅ WebUI play/pause button instantly updates when CLI triggers play/pause
+- ✅ Bidirectional sync - CLI ↔ WebUI both update each other
+
+### 9. CLI Station/Rating Broadcasts
+
+Added `BarWsBroadcastStations()` bridge function and added broadcasts to all CLI actions that modify stations or song ratings.
+
+**New functions:**
+- `BarWsBroadcastStations(app)` - Bridge function that calls `BarSocketIoEmitStations()`
+
+**Updated callbacks in `ui_act.c`:**
+
+*Rating changes (broadcast song info with updated rating):*
+- `BarUiActLoveSong()` - Now calls `BarWsBroadcastSongStart(app)` on success
+- `BarUiActBanSong()` - Now calls `BarWsBroadcastSongStart(app)` on success
+
+*Station list changes (broadcast updated station list):*
+- `BarUiActCreateStation()` - Now calls `BarWsBroadcastStations(app)` on success
+- `BarUiActCreateStationFromSong()` - Now calls `BarWsBroadcastStations(app)` on success
+- `BarUiActAddSharedStation()` - Now calls `BarWsBroadcastStations(app)` on success
+- `BarUiActDeleteStation()` - Now calls `BarWsBroadcastStations(app)` on success
+- `BarUiActRenameStation()` - Now calls `BarWsBroadcastStations(app)` on success
+- `BarUiActSelectQuickMix()` - Now calls `BarWsBroadcastStations(app)` on success
+
+**Benefits:**
+- ✅ WebUI station list instantly updates when CLI creates/deletes/renames stations
+- ✅ WebUI song rating indicator updates when CLI loves/bans songs
+- ✅ WebUI QuickMix selections update when CLI modifies QuickMix
+- ✅ Complete bidirectional sync - all CLI actions now reflected in WebUI
+
 ## Changes
 
 ### Backend (`src/websocket/`)
@@ -253,12 +382,17 @@ A comprehensive testing guide has been created in `TEST_VOLUME_DEBOUNCE.md`:
 
 ## Files Modified
 
-### Deadlock Fix
+### Deadlock Fix (Terminal I/O)
 - `src/ui.h` / `src/ui.c` - Added `BarWsPianoCall()`
 - `src/ui_act.h` / `src/ui_act.c` - Added `BarWsTransformIfShared()`
 - `src/websocket/protocol/socketio.c` - Updated 13 handlers
 - `src/websocket/protocol/socketio.h` - Added error emit declaration
 - `webui/src/app.ts` - Added error event listener
+
+### Deadlock Fix (Mutex Consolidation)
+- `src/websocket/core/websocket.h` - Simplified `BarWsProgress_t`, removed `stateMutex`
+- `src/websocket/core/websocket.c` - Rewrote broadcast functions to use single lock
+- `src/playback_manager.c` - Added `join_thread_with_timeout()` helper
 
 ### Error Messages
 - `src/websocket/protocol/error_messages.h` - New file
@@ -275,15 +409,35 @@ A comprehensive testing guide has been created in `TEST_VOLUME_DEBOUNCE.md`:
 ### Progress Fix
 - `src/websocket/core/websocket.c` - Simplified to use player state
 
+### CLI Play/Pause Sync
+- `src/websocket/protocol/socketio.h` - Added `BarSocketIoEmitPlayState()` declaration
+- `src/websocket/protocol/socketio.c` - Added `BarSocketIoEmitPlayState()` implementation
+- `src/websocket_bridge.h` - Added `BarWsBroadcastPlayState()` declaration
+- `src/websocket_bridge.c` - Added `BarWsBroadcastPlayState()` implementation
+- `src/ui_act.c` - Added broadcast calls to play/pause callbacks
+
+### CLI State Sync (Stations, Ratings)
+- `src/websocket_bridge.h` - Added `BarWsBroadcastStations()` declaration
+- `src/websocket_bridge.c` - Added `BarWsBroadcastStations()` implementation
+- `src/ui_act.c` - Added broadcast calls to CLI action callbacks:
+  - `BarUiActLoveSong()` - Broadcasts song rating update
+  - `BarUiActBanSong()` - Broadcasts song rating update
+  - `BarUiActCreateStation()` - Broadcasts station list change
+  - `BarUiActCreateStationFromSong()` - Broadcasts station list change
+  - `BarUiActAddSharedStation()` - Broadcasts station list change
+  - `BarUiActDeleteStation()` - Broadcasts station list change
+  - `BarUiActRenameStation()` - Broadcasts station list change
+  - `BarUiActSelectQuickMix()` - Broadcasts station list change
+
 ### Documentation
 - `ISSUE_WEBSOCKET_DEADLOCK.md` - Detailed deadlock analysis
 - `DEADLOCK_FIX_TESTING.md` - Testing guide
 
 ## Stats
 
-- **Backend:** +396 lines, -141 lines
+- **Backend:** +500 lines, -180 lines
 - **Frontend:** +28 lines, -2 lines
 - **Tests:** +153 lines (20 new tests)
-- **Documentation:** +249 lines
-- **Total:** 19 files changed, 826 insertions(+), 143 deletions(-)
+- **Documentation:** +300 lines
+- **Total:** 24 files changed, ~980 insertions(+), ~180 deletions(-)
 

@@ -55,15 +55,9 @@ typedef struct {
 	char protocol[64];            /* Protocol: "socketio" or "homeassistant" */
 } BarWsConnection_t;
 
-/* Song progress tracking */
+/* Progress tracking - simplified, uses player->lock as source of truth */
 typedef struct {
-	time_t songStartTime;         /* When song started playing */
-	unsigned int songDuration;    /* Total duration in seconds */
-	bool isPlaying;               /* Is currently playing */
-	bool isPaused;                /* Is currently paused */
-	time_t pausedAt;              /* When song was paused */
-	unsigned int pausedElapsed;   /* Elapsed time when paused */
-	unsigned int lastBroadcast;   /* Last progress broadcast time */
+	unsigned int lastBroadcast;   /* Last progress time broadcast (optimization) */
 } BarWsProgress_t;
 
 /* WebSocket server context */
@@ -74,12 +68,12 @@ typedef struct {
 	/* Threading */
 	pthread_t thread;             /* WebSocket service thread */
 	bool threadRunning;           /* Thread lifecycle flag */
-	pthread_mutex_t stateMutex;   /* Protects shared state */
+	/* Note: stateMutex removed - use player->lock as single source of truth */
 	
 	/* Message buckets (Main → WS thread) - REPLACES broadcastQueue */
 	BarWsBucket_t buckets[BUCKET_COUNT];
 	
-	/* Progress tracking (WS thread only) */
+	/* Progress tracking - single-threaded access from playback manager */
 	BarWsProgress_t progress;
 	
 	/* Delayed volume broadcast (for debouncing) */

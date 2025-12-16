@@ -40,6 +40,8 @@ void BarWsBroadcastUpcoming(BarApp_t *app, PianoSong_t *songs, int count);
 void BarWsBroadcastSongStart(BarApp_t *app);
 void BarWsBroadcastSongStop(BarApp_t *app);
 void BarWsBroadcastProgress(BarApp_t *app);
+void BarWsBroadcastPlayState(BarApp_t *app);
+void BarWsBroadcastStations(BarApp_t *app);
 
 /* Lifecycle management */
 bool BarWsInit(BarApp_t *app);
