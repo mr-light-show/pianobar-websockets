@@ -693,25 +693,16 @@ void BarWebsocketDestroy(BarApp_t *app) {
 	fprintf(stderr, "WebSocket: Server stopped\n");
 }
 
-/* Get current elapsed time */
+/* Get current elapsed time from player */
 unsigned int BarWebsocketGetElapsed(BarApp_t *app) {
-	if (!app || !app->wsContext) {
+	if (!app) {
 		return 0;
 	}
 	
-	BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
-	
-	if (!ctx->progress.isPlaying) {
-		return 0;
-	}
-	
-	time_t now = time(NULL);
-	unsigned int elapsed = (unsigned int)(now - ctx->progress.songStartTime);
-	
-	/* Cap at duration */
-	if (elapsed > ctx->progress.songDuration) {
-		elapsed = ctx->progress.songDuration;
-	}
+	/* Use player's tracked time - same source as CLI */
+	pthread_mutex_lock(&app->player.lock);
+	unsigned int elapsed = app->player.songPlayed;
+	pthread_mutex_unlock(&app->player.lock);
 	
 	return elapsed;
 }
@@ -726,11 +717,7 @@ void BarWebsocketBroadcastSongStart(BarApp_t *app) {
 	
 	/* Update progress tracking */
 	pthread_mutex_lock(&ctx->stateMutex);
-	ctx->progress.songStartTime = time(NULL);
 	ctx->progress.isPlaying = true;
-	ctx->progress.isPaused = false;
-	ctx->progress.pausedAt = 0;
-	ctx->progress.pausedElapsed = 0;
 	ctx->progress.lastBroadcast = 0;
 	
 	/* Get song duration from player */
@@ -797,42 +784,11 @@ void BarWebsocketBroadcastProgress(BarApp_t *app) {
 		return;
 	}
 	
-	unsigned int elapsed;
-	
-	/* Check if player is paused */
+	/* Get current elapsed from player - same source as CLI */
 	pthread_mutex_lock(&player->lock);
-	bool paused = player->doPause;
+	unsigned int elapsed = player->songPlayed;
+	unsigned int duration = player->songDuration;
 	pthread_mutex_unlock(&player->lock);
-	
-	if (paused) {
-		/* Paused - use frozen elapsed time */
-		if (!ctx->progress.isPaused) {
-			/* Just paused - save current elapsed */
-			ctx->progress.isPaused = true;
-			ctx->progress.pausedAt = time(NULL);
-			elapsed = (unsigned int)(ctx->progress.pausedAt - ctx->progress.songStartTime);
-			ctx->progress.pausedElapsed = elapsed;
-		} else {
-			/* Still paused - use saved elapsed */
-			elapsed = ctx->progress.pausedElapsed;
-		}
-	} else {
-		/* Playing - calculate elapsed */
-		if (ctx->progress.isPaused) {
-			/* Just resumed - adjust start time to account for pause duration */
-			ctx->progress.isPaused = false;
-			time_t pauseDuration = time(NULL) - ctx->progress.pausedAt;
-			ctx->progress.songStartTime += pauseDuration;
-		}
-		
-		time_t now = time(NULL);
-		elapsed = (unsigned int)(now - ctx->progress.songStartTime);
-	}
-	
-	/* Cap at duration */
-	if (elapsed > ctx->progress.songDuration) {
-		elapsed = ctx->progress.songDuration;
-	}
 	
 	/* Only broadcast if changed */
 	if (elapsed == ctx->progress.lastBroadcast) {
@@ -841,8 +797,6 @@ void BarWebsocketBroadcastProgress(BarApp_t *app) {
 	}
 	
 	ctx->progress.lastBroadcast = elapsed;
-	unsigned int duration = ctx->progress.songDuration;
-	
 	pthread_mutex_unlock(&ctx->stateMutex);
 	
 	/* Queue progress update to bucket for WebSocket thread */

@@ -36,6 +36,7 @@ THE SOFTWARE.
 #include "ui_dispatch.h"
 #include "websocket_bridge.h"
 #include "bar_state.h"
+#include "debug.h"
 
 /*	standard eventcmd call
  */
@@ -80,6 +81,27 @@ int BarTransformIfShared (BarApp_t *app, PianoStation_t *station) {
 		BarUiMsg (&app->settings, MSG_INFO, "Transforming station... ");
 		if (!BarUiPianoCall (app, PIANO_REQUEST_TRANSFORM_STATION, station,
 				&pRet, &wRet)) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+/*	Silent version of BarTransformIfShared for WebSocket thread
+ *	Does not write to terminal (no BarUiMsg calls)
+ *	Returns error message via errorMsg parameter
+ */
+int BarWsTransformIfShared (BarApp_t *app, PianoStation_t *station, char **errorMsg) {
+	PianoReturn_t pRet;
+	CURLcode wRet;
+
+	assert (station != NULL);
+
+	/* shared stations must be transformed */
+	if (!station->isCreator) {
+		debugPrint(DEBUG_WEBSOCKET, "Transforming shared station...\n");
+		if (!BarWsPianoCall (app, PIANO_REQUEST_TRANSFORM_STATION, station,
+				&pRet, &wRet, errorMsg)) {
 			return 0;
 		}
 	}
