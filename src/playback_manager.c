@@ -34,6 +34,7 @@ THE SOFTWARE.
 #include <assert.h>
 #include <signal.h>
 #include <time.h>
+#include <errno.h>
 
 /* Forward declarations of functions from main.c */
 extern void BarMainGetPlaylist(BarApp_t *app);
@@ -43,10 +44,31 @@ extern sig_atomic_t *interrupted;
 static pthread_t g_playbackThread;
 static volatile bool g_running = false;
 
+/*	Join thread with timeout - prevents deadlock if player hangs on network
+ *	Returns true if thread joined successfully, false if timeout expired
+ */
+static bool join_thread_with_timeout(pthread_t thread, void **retval, int timeout_secs) {
+	for (int i = 0; i < timeout_secs * 10; i++) {
+		/* Check if thread is still alive using pthread_kill with signal 0 */
+		int ret = pthread_kill(thread, 0);
+		if (ret == ESRCH) {
+			/* Thread no longer exists - join to clean up */
+			pthread_join(thread, retval);
+			return true;
+		} else if (ret != 0) {
+			/* Error checking thread status */
+			debugPrint(DEBUG_UI, "PlaybackMgr: pthread_kill error %d\n", ret);
+			return false;
+		}
+		usleep(100000);  /* 100ms */
+	}
+	return false;  /* Timeout */
+}
+
 /*	Player cleanup after song finishes
  */
 static void PlaybackManagerPlayerCleanup(BarApp_t *app, pthread_t *playerThread) {
-	void *threadRet;
+	void *threadRet = (void *)PLAYER_RET_HARDFAIL;
 
 	BarUiStartEventCmd(&app->settings, "songfinish", BarStateGetCurrentStation(app),
 			BarStateGetPlaylist(app), &app->player, BarStateGetStationList(app), 
@@ -54,8 +76,23 @@ static void PlaybackManagerPlayerCleanup(BarApp_t *app, pthread_t *playerThread)
 
 	BarWsBroadcastSongStop(app);
 
-	/* Wait for player thread to complete */
-	pthread_join(*playerThread, &threadRet);
+	/* Wait for player thread to complete with timeout to prevent deadlock */
+	if (!join_thread_with_timeout(*playerThread, &threadRet, 10)) {
+		debugPrint(DEBUG_UI, "PlaybackMgr: WARNING - player thread did not exit within 10s\n");
+		
+		/* Force interrupt and try again */
+		pthread_mutex_lock(&app->player.lock);
+		app->player.interrupted = 2;
+		app->player.doQuit = true;
+		pthread_cond_broadcast(&app->player.cond);
+		pthread_mutex_unlock(&app->player.lock);
+		
+		if (!join_thread_with_timeout(*playerThread, &threadRet, 5)) {
+			debugPrint(DEBUG_UI, "PlaybackMgr: ERROR - player thread hung, detaching\n");
+			pthread_detach(*playerThread);  /* Accept the leak to avoid deadlock */
+			threadRet = (void *)PLAYER_RET_HARDFAIL;
+		}
+	}
 
 	if (threadRet == (void *) PLAYER_RET_OK) {
 		app->playerErrors = 0;
@@ -163,7 +200,19 @@ static void *BarPlaybackManagerThread(void *data) {
 	/* Cleanup if player still running */
 	if (BarPlayerGetMode(&app->player) != PLAYER_DEAD) {
 		debugPrint(DEBUG_UI, "PlaybackMgr: Waiting for player to finish\n");
-		pthread_join(playerThread, NULL);
+		if (!join_thread_with_timeout(playerThread, NULL, 10)) {
+			debugPrint(DEBUG_UI, "PlaybackMgr: Force stopping hung player\n");
+			pthread_mutex_lock(&app->player.lock);
+			app->player.interrupted = 2;
+			app->player.doQuit = true;
+			pthread_cond_broadcast(&app->player.cond);
+			pthread_mutex_unlock(&app->player.lock);
+			
+			if (!join_thread_with_timeout(playerThread, NULL, 5)) {
+				debugPrint(DEBUG_UI, "PlaybackMgr: Detaching hung player thread\n");
+				pthread_detach(playerThread);
+			}
+		}
 	}
 	
 	debugPrint(DEBUG_UI, "PlaybackMgr: Thread stopped\n");

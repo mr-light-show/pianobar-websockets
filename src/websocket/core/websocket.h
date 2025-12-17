@@ -55,15 +55,9 @@ typedef struct {
 	char protocol[64];            /* Protocol: "socketio" or "homeassistant" */
 } BarWsConnection_t;
 
-/* Song progress tracking */
+/* Progress tracking - simplified, uses player->lock as source of truth */
 typedef struct {
-	time_t songStartTime;         /* When song started playing */
-	unsigned int songDuration;    /* Total duration in seconds */
-	bool isPlaying;               /* Is currently playing */
-	bool isPaused;                /* Is currently paused */
-	time_t pausedAt;              /* When song was paused */
-	unsigned int pausedElapsed;   /* Elapsed time when paused */
-	unsigned int lastBroadcast;   /* Last progress broadcast time */
+	unsigned int lastBroadcast;   /* Last progress time broadcast (optimization) */
 } BarWsProgress_t;
 
 /* WebSocket server context */
@@ -74,13 +68,20 @@ typedef struct {
 	/* Threading */
 	pthread_t thread;             /* WebSocket service thread */
 	bool threadRunning;           /* Thread lifecycle flag */
-	pthread_mutex_t stateMutex;   /* Protects shared state */
+	/* Note: stateMutex removed - use player->lock as single source of truth */
 	
 	/* Message buckets (Main → WS thread) - REPLACES broadcastQueue */
 	BarWsBucket_t buckets[BUCKET_COUNT];
 	
-	/* Progress tracking (WS thread only) */
+	/* Progress tracking - single-threaded access from playback manager */
 	BarWsProgress_t progress;
+	
+	/* Delayed volume broadcast (for debouncing) */
+	struct {
+		time_t scheduleTime;    /* When to broadcast (epoch ms) */
+		bool pending;           /* Whether broadcast is pending */
+	} delayedVolumeBroadcast;
+	pthread_mutex_t volumeBroadcastMutex;
 	
 	/* Connections (WS thread only) */
 	BarWsConnection_t *connections;
@@ -112,6 +113,9 @@ unsigned int BarWebsocketGetElapsed(BarApp_t *app);
 /* Handle incoming WebSocket message */
 void BarWebsocketHandleMessage(BarApp_t *app, const char *message, 
                                size_t len, const char *protocol, void *wsi);
+
+/* Schedule delayed volume broadcast (for debouncing) */
+void BarWsScheduleVolumeBroadcast(BarWsContext_t *ctx, int delayMs);
 
 #endif /* _WEBSOCKET_H */
 

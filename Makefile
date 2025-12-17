@@ -46,6 +46,7 @@ ifeq ($(WEBSOCKET),1)
 		${WEBSOCKET_DIR}/core/queue.c \
 		${WEBSOCKET_DIR}/http/http_server.c \
 		${WEBSOCKET_DIR}/protocol/socketio.c \
+		${WEBSOCKET_DIR}/protocol/error_messages.c \
 		${WEBSOCKET_DIR}/daemon/daemon.c
 endif
 

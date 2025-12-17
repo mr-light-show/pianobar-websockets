@@ -80,6 +80,12 @@ void BarSocketIoEmitProcess(BarApp_t *app);
 /* Emit 'song.explanation' event (explanation text) */
 void BarSocketIoEmitExplanation(BarApp_t *app, const char *explanation);
 
+/* Emit 'error' event (error notification) */
+void BarSocketIoEmitError(const char *operation, const char *message);
+
+/* Emit 'playState' event (paused/resumed state) */
+void BarSocketIoEmitPlayState(BarApp_t *app);
+
 /* Emit 'query.upcoming.result' event (upcoming songs list) */
 void BarSocketIoEmitUpcoming(BarApp_t *app, struct PianoSong *firstSong, int maxSongs);
 

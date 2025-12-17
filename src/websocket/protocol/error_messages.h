@@ -1,6 +1,6 @@
 /*
-Copyright (c) 2025
-	Remote Pianobar Contributors
+Copyright (c) 2024
+	Kyle Hawes
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -23,32 +23,6 @@ THE SOFTWARE.
 
 #pragma once
 
-#include "main.h"
-
-/* WebSocket bridge functions
- * These functions are no-ops when WEBSOCKET_ENABLED is not defined
- */
-
-/* Mode predicates - return false when WebSocket is disabled */
-bool BarIsWebOnlyMode(const BarApp_t *app);
-bool BarShouldSkipCliOutput(const BarApp_t *app);
-
-/* Event broadcasts */
-void BarWsBroadcastVolume(BarApp_t *app);
-void BarWsBroadcastExplanation(BarApp_t *app, const char *explanation);
-void BarWsBroadcastUpcoming(BarApp_t *app, PianoSong_t *songs, int count);
-void BarWsBroadcastSongStart(BarApp_t *app);
-void BarWsBroadcastSongStop(BarApp_t *app);
-void BarWsBroadcastProgress(BarApp_t *app);
-void BarWsBroadcastPlayState(BarApp_t *app);
-void BarWsBroadcastStations(BarApp_t *app);
-
-/* Lifecycle management */
-bool BarWsInit(BarApp_t *app);
-void BarWsDestroy(BarApp_t *app);
-bool BarWsDaemonize(BarApp_t *app);
-void BarWsRemovePidFile(BarApp_t *app);
-
-/* Command processing */
-void BarWsProcessCommands(BarApp_t *app);
+/* Translate generic error messages into user-friendly, action-specific messages */
+const char* BarWsGetFriendlyErrorMessage(const char *operation, const char *originalError);
 

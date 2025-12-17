@@ -36,6 +36,7 @@ THE SOFTWARE.
 #include "ui_dispatch.h"
 #include "websocket_bridge.h"
 #include "bar_state.h"
+#include "debug.h"
 
 /*	standard eventcmd call
  */
@@ -80,6 +81,27 @@ int BarTransformIfShared (BarApp_t *app, PianoStation_t *station) {
 		BarUiMsg (&app->settings, MSG_INFO, "Transforming station... ");
 		if (!BarUiPianoCall (app, PIANO_REQUEST_TRANSFORM_STATION, station,
 				&pRet, &wRet)) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+/*	Silent version of BarTransformIfShared for WebSocket thread
+ *	Does not write to terminal (no BarUiMsg calls)
+ *	Returns error message via errorMsg parameter
+ */
+int BarWsTransformIfShared (BarApp_t *app, PianoStation_t *station, char **errorMsg) {
+	PianoReturn_t pRet;
+	CURLcode wRet;
+
+	assert (station != NULL);
+
+	/* shared stations must be transformed */
+	if (!station->isCreator) {
+		debugPrint(DEBUG_WEBSOCKET, "Transforming shared station...\n");
+		if (!BarWsPianoCall (app, PIANO_REQUEST_TRANSFORM_STATION, station,
+				&pRet, &wRet, errorMsg)) {
 			return 0;
 		}
 	}
@@ -150,9 +172,12 @@ BarUiActCallback(BarUiActBanSong) {
 	reqData.rating = PIANO_RATE_BAN;
 
 	BarUiMsg (&app->settings, MSG_INFO, "Banning song... ");
-	if (BarUiActDefaultPianoCall (PIANO_REQUEST_RATE_SONG, &reqData) &&
-			selSong == BarStateGetPlaylist(app)) {
-		BarUiDoSkipSong (&app->player);
+	if (BarUiActDefaultPianoCall (PIANO_REQUEST_RATE_SONG, &reqData)) {
+		/* Notify WebSocket clients of rating change */
+		BarWsBroadcastSongStart(app);
+		if (selSong == BarStateGetPlaylist(app)) {
+			BarUiDoSkipSong (&app->player);
+		}
 	}
 	BarUiActDefaultEventcmd ("songban");
 }
@@ -169,7 +194,10 @@ BarUiActCallback(BarUiActCreateStation) {
 			"Create station from artist or title: ");
 	if (reqData.token != NULL) {
 		BarUiMsg (&app->settings, MSG_INFO, "Creating station... ");
-		BarUiActDefaultPianoCall (PIANO_REQUEST_CREATE_STATION, &reqData);
+		if (BarUiActDefaultPianoCall (PIANO_REQUEST_CREATE_STATION, &reqData)) {
+			/* Notify WebSocket clients of station list change */
+			BarWsBroadcastStations(app);
+		}
 		free (reqData.token);
 		BarUiActDefaultEventcmd ("stationcreate");
 	}
@@ -200,7 +228,10 @@ BarUiActCallback(BarUiActCreateStationFromSong) {
 	}
 	if (reqData.type != PIANO_MUSICTYPE_INVALID) {
 		BarUiMsg (&app->settings, MSG_INFO, "Creating station... ");
-		BarUiActDefaultPianoCall (PIANO_REQUEST_CREATE_STATION, &reqData);
+		if (BarUiActDefaultPianoCall (PIANO_REQUEST_CREATE_STATION, &reqData)) {
+			/* Notify WebSocket clients of station list change */
+			BarWsBroadcastStations(app);
+		}
 		BarUiActDefaultEventcmd ("stationcreate");
 	}
 }
@@ -220,7 +251,10 @@ BarUiActCallback(BarUiActAddSharedStation) {
 	if (BarReadline (stationId, sizeof (stationId), "0123456789", &app->input,
 			BAR_RL_DEFAULT, -1) > 0) {
 		BarUiMsg (&app->settings, MSG_INFO, "Adding shared station... ");
-		BarUiActDefaultPianoCall (PIANO_REQUEST_CREATE_STATION, &reqData);
+		if (BarUiActDefaultPianoCall (PIANO_REQUEST_CREATE_STATION, &reqData)) {
+			/* Notify WebSocket clients of station list change */
+			BarWsBroadcastStations(app);
+		}
 		BarUiActDefaultEventcmd ("stationaddshared");
 	}
 }
@@ -258,14 +292,17 @@ BarUiActCallback(BarUiActDeleteStation) {
 			selStation->name);
 	if (BarReadlineYesNo (false, &app->input)) {
 		BarUiMsg (&app->settings, MSG_INFO, "Deleting station... ");
-		if (BarUiActDefaultPianoCall (PIANO_REQUEST_DELETE_STATION,
-				selStation) && selStation == BarStateGetCurrentStation(app)) {
-			drainPlaylist (app);
-			BarStateSetNextStation(app, NULL);
-			/* XXX: usually we shoudn't touch cur*, but DELETE_STATION destroys
-			 * station struct */
-			BarStateSetCurrentStation(app, NULL);
-			selStation = NULL;
+		if (BarUiActDefaultPianoCall (PIANO_REQUEST_DELETE_STATION, selStation)) {
+			/* Notify WebSocket clients of station list change */
+			BarWsBroadcastStations(app);
+			if (selStation == BarStateGetCurrentStation(app)) {
+				drainPlaylist (app);
+				BarStateSetNextStation(app, NULL);
+				/* XXX: usually we shoudn't touch cur*, but DELETE_STATION destroys
+				 * station struct */
+				BarStateSetCurrentStation(app, NULL);
+				selStation = NULL;
+			}
 		}
 		BarUiActDefaultEventcmd ("stationdelete");
 	}
@@ -431,7 +468,10 @@ BarUiActCallback(BarUiActLoveSong) {
 	reqData.rating = PIANO_RATE_LOVE;
 
 	BarUiMsg (&app->settings, MSG_INFO, "Loving song... ");
-	BarUiActDefaultPianoCall (PIANO_REQUEST_RATE_SONG, &reqData);
+	if (BarUiActDefaultPianoCall (PIANO_REQUEST_RATE_SONG, &reqData)) {
+		/* Notify WebSocket clients of rating change */
+		BarWsBroadcastSongStart(app);
+	}
 	BarUiActDefaultEventcmd ("songlove");
 }
 
@@ -448,6 +488,9 @@ BarUiActCallback(BarUiActPlay) {
 	app->player.doPause = false;
 	pthread_cond_broadcast (&app->player.cond);
 	pthread_mutex_unlock (&app->player.lock);
+	
+	/* Notify WebSocket clients of state change */
+	BarWsBroadcastPlayState(app);
 }
 
 /*	pause
@@ -457,6 +500,9 @@ BarUiActCallback(BarUiActPause) {
 	app->player.doPause = true;
 	pthread_cond_broadcast (&app->player.cond);
 	pthread_mutex_unlock (&app->player.lock);
+	
+	/* Notify WebSocket clients of state change */
+	BarWsBroadcastPlayState(app);
 }
 
 /*	toggle pause
@@ -466,6 +512,9 @@ BarUiActCallback(BarUiActTogglePause) {
 	app->player.doPause = !app->player.doPause;
 	pthread_cond_broadcast (&app->player.cond);
 	pthread_mutex_unlock (&app->player.lock);
+	
+	/* Notify WebSocket clients of state change */
+	BarWsBroadcastPlayState(app);
 }
 
 /*	rename current station
@@ -488,7 +537,10 @@ BarUiActCallback(BarUiActRenameStation) {
 		reqData.newName = lineBuf;
 
 		BarUiMsg (&app->settings, MSG_INFO, "Renaming station... ");
-		BarUiActDefaultPianoCall (PIANO_REQUEST_RENAME_STATION, &reqData);
+		if (BarUiActDefaultPianoCall (PIANO_REQUEST_RENAME_STATION, &reqData)) {
+			/* Notify WebSocket clients of station list change */
+			BarWsBroadcastStations(app);
+		}
 		BarUiActDefaultEventcmd ("stationrename");
 	}
 }
@@ -587,7 +639,10 @@ BarUiActCallback(BarUiActSelectQuickMix) {
 			toggleStation->useQuickMix = !toggleStation->useQuickMix;
 		}
 		BarUiMsg (&app->settings, MSG_INFO, "Setting QuickMix stations... ");
-		BarUiActDefaultPianoCall (PIANO_REQUEST_SET_QUICKMIX, NULL);
+		if (BarUiActDefaultPianoCall (PIANO_REQUEST_SET_QUICKMIX, NULL)) {
+			/* Notify WebSocket clients of station list change */
+			BarWsBroadcastStations(app);
+		}
 		BarUiActDefaultEventcmd ("stationquickmixtoggle");
 	} else {
 		BarUiMsg (&app->settings, MSG_ERR, "Please select a QuickMix station first.\n");

@@ -403,6 +403,13 @@ export class PianobarApp extends LitElement {
         this.showToast('No upcoming songs in queue');
       }
     });
+    
+    // Error event
+    this.socket.on('error', (data) => {
+      console.error('Received error:', data);
+      const message = data.message || 'An error occurred';
+      this.showToast(`❌ ${message}`);
+    });
   }
   
   handlePlayPause() {
@@ -708,7 +715,14 @@ export class PianobarApp extends LitElement {
   showToast(message: string) {
     const toast = document.createElement('toast-notification') as any;
     toast.message = message;
-    toast.duration = 5000;
+    
+    // Longer duration for errors
+    if (message.startsWith('❌') || message.toLowerCase().includes('error')) {
+      toast.duration = 7000;  // 7 seconds for errors
+    } else {
+      toast.duration = 5000;  // 5 seconds for normal messages
+    }
+    
     document.body.appendChild(toast);
   }
   

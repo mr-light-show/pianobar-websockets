@@ -77,6 +77,18 @@ void BarWsBroadcastProgress(BarApp_t *app) {
 	}
 }
 
+void BarWsBroadcastPlayState(BarApp_t *app) {
+	if (app && app->wsContext) {
+		BarSocketIoEmitPlayState(app);
+	}
+}
+
+void BarWsBroadcastStations(BarApp_t *app) {
+	if (app && app->wsContext) {
+		BarSocketIoEmitStations(app);
+	}
+}
+
 /* Lifecycle management */
 bool BarWsInit(BarApp_t *app) {
 	if (app && app->settings.uiMode != BAR_UI_MODE_CLI) {
@@ -126,6 +138,8 @@ void BarWsBroadcastUpcoming(BarApp_t *app, PianoSong_t *songs, int count) {
 void BarWsBroadcastSongStart(BarApp_t *app) { (void)app; }
 void BarWsBroadcastSongStop(BarApp_t *app) { (void)app; }
 void BarWsBroadcastProgress(BarApp_t *app) { (void)app; }
+void BarWsBroadcastPlayState(BarApp_t *app) { (void)app; }
+void BarWsBroadcastStations(BarApp_t *app) { (void)app; }
 
 bool BarWsInit(BarApp_t *app) { (void)app; return true; }
 void BarWsDestroy(BarApp_t *app) { (void)app; }

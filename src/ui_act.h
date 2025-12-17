@@ -68,3 +68,6 @@ void BarUiSwitchStation (BarApp_t * const app, PianoStation_t * const station);
 /* Transform station if shared (for WebSocket use) */
 int BarTransformIfShared (BarApp_t *app, PianoStation_t *station);
 
+/* Silent version of BarTransformIfShared for WebSocket thread */
+int BarWsTransformIfShared (BarApp_t *app, PianoStation_t *station, char **errorMsg);
+
