@@ -47,13 +47,21 @@ void BarWsBroadcastVolume(BarApp_t *app) {
 
 void BarWsBroadcastExplanation(BarApp_t *app, const char *explanation) {
 	if (app && app->wsContext) {
-		BarSocketIoEmitExplanation(app, explanation);
+		/* Only emit if unicast target is set (WebUI request).
+		 * CLI requests have no unicast target - user sees result in terminal. */
+		if (BarSocketIoGetUnicastTarget() != NULL) {
+			BarSocketIoEmitExplanation(app, explanation);
+		}
 	}
 }
 
 void BarWsBroadcastUpcoming(BarApp_t *app, PianoSong_t *songs, int count) {
 	if (app && app->wsContext) {
-		BarSocketIoEmitUpcoming(app, songs, count);
+		/* Only emit if unicast target is set (WebUI request).
+		 * CLI requests have no unicast target - user sees result in terminal. */
+		if (BarSocketIoGetUnicastTarget() != NULL) {
+			BarSocketIoEmitUpcoming(app, songs, count);
+		}
 	}
 }
 

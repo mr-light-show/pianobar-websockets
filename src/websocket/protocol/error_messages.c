@@ -57,15 +57,10 @@ const char* BarWsGetFriendlyErrorMessage(const char *operation, const char *orig
 	}
 	
 	/* Handle authentication errors */
-	if (strstr(originalError, "auth token") != NULL ||
+	if (strstr(originalError, "auth") != NULL ||
 	    strstr(originalError, "login") != NULL ||
-	    strstr(originalError, "INVALID_AUTH_TOKEN") != NULL) {
+	    strstr(originalError, "Invalid") != NULL) {
 		return "Authentication failed (session may have expired)";
-	}
-	
-	/* Handle invalid/malformed response errors */
-	if (strstr(originalError, "Invalid response") != NULL) {
-		return "Received invalid response from Pandora (try again)";
 	}
 	
 	/* Handle interrupted requests */
@@ -108,4 +103,3 @@ const char* BarWsGetFriendlyErrorMessage(const char *operation, const char *orig
 	/* If we don't recognize the operation, return the original error */
 	return originalError;
 }
-
