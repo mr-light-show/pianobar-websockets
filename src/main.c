@@ -148,8 +148,14 @@ static bool BarMainGetLoginCredentials (BarSettings_t *settings,
 
 				close (pipeFd[1]);
 				memset (passBuf, 0, sizeof (passBuf));
-				read (pipeFd[0], passBuf, sizeof (passBuf)-1);
+				ssize_t bytesRead = read (pipeFd[0], passBuf, sizeof (passBuf)-1);
 				close (pipeFd[0]);
+
+				if (bytesRead < 0) {
+					BarUiMsg (settings, MSG_NONE, "Error reading password: %s\n", strerror (errno));
+					waitpid (chld, &status, 0);
+					return false;
+				}
 
 				/* drop trailing newlines */
 				ssize_t len = strlen (passBuf)-1;
