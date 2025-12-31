@@ -4,6 +4,7 @@ import { customElement, property } from 'lit/decorators.js';
 /**
  * Convert slider percentage (0-100) to decibels (-40 to maxGain)
  * Uses perceptual curve: squared for bottom half, linear for top half
+ * Only used in player mode.
  */
 function sliderToDb(sliderPercent: number, maxGain: number = 10): number {
   if (sliderPercent <= 50) {
@@ -19,6 +20,7 @@ function sliderToDb(sliderPercent: number, maxGain: number = 10): number {
 
 /**
  * Convert decibels (-40 to maxGain) to slider percentage (0-100)
+ * Only used in player mode.
  */
 function dbToSlider(db: number, maxGain: number = 10): number {
   if (db <= 0) {
@@ -36,6 +38,7 @@ function dbToSlider(db: number, maxGain: number = 10): number {
 export class VolumeControl extends LitElement {
   @property({ type: Number }) volume = 50;
   @property({ type: Number }) maxGain = 10;
+  @property({ type: String }) volumeMode: 'player' | 'system' = 'player';
   
   static styles = css`
     :host {
@@ -108,25 +111,50 @@ export class VolumeControl extends LitElement {
     const sliderPercent = parseInt(target.value);
     this.volume = sliderPercent;
     
-    // Calculate dB for display only
-    const db = Math.round(sliderToDb(sliderPercent, this.maxGain));
-    
     this.dispatchEvent(new CustomEvent('volume-change', {
       detail: { 
         percent: sliderPercent,
-        db  // for display/local state only
+        // In system mode, percent is the actual value; in player mode, include dB
+        db: this.volumeMode === 'system' ? null : Math.round(sliderToDb(sliderPercent, this.maxGain))
       }
     }));
   }
   
-  // Method to update from dB value (for incoming updates)
+  // Method to update from server value
+  // In player mode: value is dB, needs conversion to slider position
+  // In system mode: value is already percentage, use directly
+  updateFromServer(value: number) {
+    if (this.volumeMode === 'system') {
+      // System mode: value is 0-100%, use directly
+      this.volume = Math.max(0, Math.min(100, value));
+    } else {
+      // Player mode: value is dB, convert to slider position
+      this.volume = Math.round(dbToSlider(value, this.maxGain));
+    }
+  }
+  
+  // Legacy method for compatibility
   updateFromDb(db: number) {
-    this.volume = Math.round(dbToSlider(db, this.maxGain));
+    if (this.volumeMode === 'system') {
+      // In system mode, treat as percentage
+      this.volume = Math.max(0, Math.min(100, db));
+    } else {
+      this.volume = Math.round(dbToSlider(db, this.maxGain));
+    }
   }
   
   render() {
-    const db = Math.round(sliderToDb(this.volume, this.maxGain));
-    const dbDisplay = db >= 0 ? `+${db}` : `${db}`;
+    let displayValue: string;
+    
+    if (this.volumeMode === 'system') {
+      // System mode: just show percentage
+      displayValue = `${this.volume}%`;
+    } else {
+      // Player mode: show percentage and dB
+      const db = Math.round(sliderToDb(this.volume, this.maxGain));
+      const dbDisplay = db >= 0 ? `+${db}` : `${db}`;
+      displayValue = `${this.volume}% (${dbDisplay}dB)`;
+    }
     
     return html`
       <span class="material-icons">volume_up</span>
@@ -138,7 +166,7 @@ export class VolumeControl extends LitElement {
         .value="${this.volume}"
         @input=${this.handleVolumeChange}
       >
-      <span class="volume-value">${this.volume}% (${dbDisplay}dB)</span>
+      <span class="volume-value">${displayValue}</span>
     `;
   }
 }

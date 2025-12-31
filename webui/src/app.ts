@@ -35,6 +35,7 @@ export class PianobarApp extends LitElement {
   @state() private totalTime = 0;
   @state() private volume = 0;
   @state() private maxGain = 10;
+  @state() private volumeMode: 'player' | 'system' = 'player';
   @state() private rating = 0;
   @state() private stations: any[] = [];
   @state() private currentStation = '';
@@ -278,10 +279,11 @@ export class PianobarApp extends LitElement {
 
     // Volume event - update volume control when other clients change volume
     this.socket.on('volume', (data) => {
-      const volumeDb = typeof data === 'number' ? data : data.volume;
+      const volumeValue = typeof data === 'number' ? data : data.volume;
       const volumeControl = this.shadowRoot?.querySelector('volume-control');
-      if (volumeControl && volumeDb !== undefined) {
-        (volumeControl as any).updateFromDb(volumeDb);
+      if (volumeControl && volumeValue !== undefined) {
+        // Use updateFromServer which handles both modes correctly
+        (volumeControl as any).updateFromServer(volumeValue);
       }
     });
     
@@ -379,10 +381,17 @@ export class PianobarApp extends LitElement {
         this.maxGain = data.maxGain;
       }
       
+      // Update volume mode if present
+      if (data.volumeMode !== undefined) {
+        this.volumeMode = data.volumeMode;
+      }
+      
       // Update volume control if present
       const volumeControl = this.shadowRoot?.querySelector('volume-control');
       if (volumeControl && data.volume !== undefined) {
-        (volumeControl as any).updateFromDb(data.volume);
+        // Set volume mode first, then update value
+        (volumeControl as any).volumeMode = this.volumeMode;
+        (volumeControl as any).updateFromServer(data.volume);
       }
     });
     
@@ -807,6 +816,7 @@ export class PianobarApp extends LitElement {
           <volume-control
             .volume="${50}"
             .maxGain="${this.maxGain}"
+            .volumeMode="${this.volumeMode}"
             @volume-change=${this.handleVolumeChange}
           ></volume-control>
           

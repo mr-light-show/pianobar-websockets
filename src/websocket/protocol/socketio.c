@@ -580,11 +580,20 @@ void BarSocketIoEmitProcess(BarApp_t *app) {
 	pthread_mutex_unlock(&app->player.lock);
 	json_object_object_add(data, "paused", json_object_new_boolean(paused));
 	
-	/* Include current volume */
-	json_object_object_add(data, "volume", 
-	                       json_object_new_int(app->settings.volume));
+	/* Include current volume and volume mode */
+	int volume;
+	bool isSystemVolume = (app->settings.volumeMode == BAR_VOLUME_MODE_SYSTEM);
+	if (isSystemVolume) {
+		volume = BarSystemVolumeGet();
+		if (volume < 0) volume = 50;  /* Fallback */
+	} else {
+		volume = app->settings.volume;
+	}
+	json_object_object_add(data, "volume", json_object_new_int(volume));
+	json_object_object_add(data, "volumeMode", 
+	                       json_object_new_string(isSystemVolume ? "system" : "player"));
 	
-	/* Include max gain configuration */
+	/* Include max gain configuration (only relevant for player mode) */
 	json_object_object_add(data, "maxGain", 
 	                       json_object_new_int(app->settings.maxGain));
 	
