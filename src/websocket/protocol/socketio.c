@@ -1575,12 +1575,12 @@ void BarSocketIoHandleAction(BarApp_t *app, const char *action, json_object *dat
 			if (volumePercent > 100) volumePercent = 100;
 			
 			if (app->settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
-				/* System volume mode - set directly as percentage */
+				/* System volume mode - set OS volume directly as percentage.
+				 * Don't modify settings.volume - it stays at 0dB for the player. */
 				debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Action '%s' → system volume=%d%%\n", 
 				           action, volumePercent);
 				
 				BarSystemVolumeSet(volumePercent);
-				app->settings.volume = volumePercent;
 			} else {
 				/* Player volume mode - convert percentage to dB using perceptual curve */
 				int volumeDb = sliderToDb(volumePercent, app->settings.maxGain);

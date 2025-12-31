@@ -27,6 +27,7 @@ THE SOFTWARE.
 
 #include "../../main.h"
 #include "../../debug.h"
+#include "../../system_volume.h"
 #include "websocket.h"
 #include "../protocol/socketio.h"
 #include "../http/http_server.h"
@@ -478,11 +479,18 @@ static void BarWsProcessVolumeBroadcast(BarWsContext_t *ctx, BarApp_t *app) {
 		ctx->delayedVolumeBroadcast.pending = false;
 		pthread_mutex_unlock(&ctx->volumeBroadcastMutex);
 		
-		/* Read CURRENT volume from settings (not stored value) */
-		int currentVolume = app->settings.volume;
-		
-		debugPrint(DEBUG_WEBSOCKET, "WebSocket: Executing delayed volume broadcast - %ddB (current volume)\n", 
-		           currentVolume);
+		/* Read CURRENT volume - from system if in system mode, from settings otherwise */
+		int currentVolume;
+		if (app->settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
+			currentVolume = BarSystemVolumeGet();
+			if (currentVolume < 0) currentVolume = 50;  /* Fallback */
+			debugPrint(DEBUG_WEBSOCKET, "WebSocket: Executing delayed volume broadcast - %d%% (system volume)\n", 
+			           currentVolume);
+		} else {
+			currentVolume = app->settings.volume;
+			debugPrint(DEBUG_WEBSOCKET, "WebSocket: Executing delayed volume broadcast - %ddB (player volume)\n", 
+			           currentVolume);
+		}
 		
 		/* Broadcast to all clients */
 		BarSocketIoEmitVolume(app, currentVolume);

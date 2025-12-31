@@ -728,7 +728,7 @@ BarUiActCallback(BarUiActVolDown) {
 			int newVol = currentVol - 5;  /* 5% step for system volume */
 			if (newVol < 0) newVol = 0;
 			BarSystemVolumeSet(newVol);
-			app->settings.volume = newVol;
+			/* Don't modify settings.volume - it stays at 0dB for player */
 		}
 	} else {
 		--app->settings.volume;
@@ -746,7 +746,7 @@ BarUiActCallback(BarUiActVolUp) {
 			int newVol = currentVol + 5;  /* 5% step for system volume */
 			if (newVol > 100) newVol = 100;
 			BarSystemVolumeSet(newVol);
-			app->settings.volume = newVol;
+			/* Don't modify settings.volume - it stays at 0dB for player */
 		}
 	} else {
 		++app->settings.volume;
@@ -760,7 +760,7 @@ BarUiActCallback(BarUiActVolUp) {
 BarUiActCallback(BarUiActVolReset) {
 	if (app->settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
 		BarSystemVolumeSet(50);  /* Reset to 50% for system volume */
-		app->settings.volume = 50;
+		/* Don't modify settings.volume - it stays at 0dB for player */
 	} else {
 		app->settings.volume = 0;
 		BarPlayerSetVolume (&app->player);

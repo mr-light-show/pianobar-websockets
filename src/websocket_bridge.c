@@ -22,6 +22,7 @@ THE SOFTWARE.
 */
 
 #include "websocket_bridge.h"
+#include "system_volume.h"
 
 #ifdef WEBSOCKET_ENABLED
 #include "websocket/core/websocket.h"
@@ -41,7 +42,16 @@ bool BarShouldSkipCliOutput(const BarApp_t *app) {
 /* Event broadcasts */
 void BarWsBroadcastVolume(BarApp_t *app) {
 	if (app && app->wsContext) {
-		BarSocketIoEmitVolume(app, app->settings.volume);
+		int volume;
+		if (app->settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
+			/* In system mode, read current volume from OS */
+			volume = BarSystemVolumeGet();
+			if (volume < 0) volume = 50;  /* Fallback */
+		} else {
+			/* Player mode - use dB value */
+			volume = app->settings.volume;
+		}
+		BarSocketIoEmitVolume(app, volume);
 	}
 }
 

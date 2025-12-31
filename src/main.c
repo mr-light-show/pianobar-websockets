@@ -533,14 +533,10 @@ int main (int argc, char **argv) {
 	/* Initialize system volume control if configured */
 	if (app.settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
 		if (BarSystemVolumeInit()) {
-			/* Always get volume from system, ignore config/state file value */
-			int sysVol = BarSystemVolumeGet();
-			if (sysVol >= 0) {
-				app.settings.volume = sysVol;
-			} else {
-				/* If we can't read system volume, use a sensible default */
-				app.settings.volume = 50;
-			}
+			/* In system mode, keep player volume at 0dB (neutral).
+			 * The OS mixer controls actual volume, not the player's gain stage.
+			 * System volume is read directly when needed for display/broadcast. */
+			app.settings.volume = 0;  /* 0dB = no gain adjustment */
 		} else {
 			/* Fall back to player volume if system volume unavailable */
 			fprintf(stderr, "Warning: System volume control unavailable, falling back to player volume\n");
