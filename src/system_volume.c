@@ -184,11 +184,13 @@ static bool macosSetVolume(int percent) {
 #ifdef HAVE_PULSEAUDIO
 #include <pulse/pulseaudio.h>
 #include <pulse/simple.h>
+#include <pthread.h>
 
 static pa_mainloop *paMainloop = NULL;
 static pa_context *paContext = NULL;
 static int paVolume = -1;
 static bool paReady = false;
+static pthread_mutex_t paMutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* PulseAudio callback for context state */
 static void paContextStateCb(pa_context *c, void *userdata) {
@@ -210,10 +212,13 @@ static void paSinkInfoCb(pa_context *c, const pa_sink_info *i, int eol, void *us
 	paVolume = (int)((pa_cvolume_avg(&i->volume) * 100 + PA_VOLUME_NORM / 2) / PA_VOLUME_NORM);
 }
 
-/* PulseAudio: Initialize connection */
+/* PulseAudio: Initialize connection (thread-safe) */
 static bool pulseaudioInit(void) {
+	pthread_mutex_lock(&paMutex);
+	
 	paMainloop = pa_mainloop_new();
 	if (!paMainloop) {
+		pthread_mutex_unlock(&paMutex);
 		return false;
 	}
 	
@@ -222,6 +227,7 @@ static bool pulseaudioInit(void) {
 	if (!paContext) {
 		pa_mainloop_free(paMainloop);
 		paMainloop = NULL;
+		pthread_mutex_unlock(&paMutex);
 		return false;
 	}
 	
@@ -232,6 +238,7 @@ static bool pulseaudioInit(void) {
 		pa_mainloop_free(paMainloop);
 		paContext = NULL;
 		paMainloop = NULL;
+		pthread_mutex_unlock(&paMutex);
 		return false;
 	}
 	
@@ -253,15 +260,20 @@ static bool pulseaudioInit(void) {
 		pa_mainloop_free(paMainloop);
 		paContext = NULL;
 		paMainloop = NULL;
+		pthread_mutex_unlock(&paMutex);
 		return false;
 	}
 	
+	pthread_mutex_unlock(&paMutex);
 	return true;
 }
 
-/* PulseAudio: Get volume */
+/* PulseAudio: Get volume (thread-safe) */
 static int pulseaudioGetVolume(void) {
+	pthread_mutex_lock(&paMutex);
+	
 	if (!paContext || !paReady) {
+		pthread_mutex_unlock(&paMutex);
 		return -1;
 	}
 	
@@ -270,6 +282,7 @@ static int pulseaudioGetVolume(void) {
 		paContext, "@DEFAULT_SINK@", paSinkInfoCb, NULL);
 	
 	if (!op) {
+		pthread_mutex_unlock(&paMutex);
 		return -1;
 	}
 	
@@ -279,12 +292,17 @@ static int pulseaudioGetVolume(void) {
 	}
 	pa_operation_unref(op);
 	
-	return paVolume;
+	int result = paVolume;
+	pthread_mutex_unlock(&paMutex);
+	return result;
 }
 
-/* PulseAudio: Set volume */
+/* PulseAudio: Set volume (thread-safe) */
 static bool pulseaudioSetVolume(int percent) {
+	pthread_mutex_lock(&paMutex);
+	
 	if (!paContext || !paReady) {
+		pthread_mutex_unlock(&paMutex);
 		return false;
 	}
 	
@@ -295,6 +313,7 @@ static bool pulseaudioSetVolume(int percent) {
 		paContext, "@DEFAULT_SINK@", &cv, NULL, NULL);
 	
 	if (!op) {
+		pthread_mutex_unlock(&paMutex);
 		return false;
 	}
 	
@@ -304,11 +323,14 @@ static bool pulseaudioSetVolume(int percent) {
 	}
 	pa_operation_unref(op);
 	
+	pthread_mutex_unlock(&paMutex);
 	return true;
 }
 
-/* PulseAudio: Cleanup */
+/* PulseAudio: Cleanup (thread-safe) */
 static void pulseaudioDestroy(void) {
+	pthread_mutex_lock(&paMutex);
+	
 	if (paContext) {
 		pa_context_disconnect(paContext);
 		pa_context_unref(paContext);
@@ -319,6 +341,8 @@ static void pulseaudioDestroy(void) {
 		paMainloop = NULL;
 	}
 	paReady = false;
+	
+	pthread_mutex_unlock(&paMutex);
 }
 #endif /* HAVE_PULSEAUDIO */
 

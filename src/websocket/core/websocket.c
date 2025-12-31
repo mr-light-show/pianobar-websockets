@@ -479,21 +479,22 @@ static void BarWsProcessVolumeBroadcast(BarWsContext_t *ctx, BarApp_t *app) {
 		ctx->delayedVolumeBroadcast.pending = false;
 		pthread_mutex_unlock(&ctx->volumeBroadcastMutex);
 		
-		/* Read CURRENT volume - from system if in system mode, from settings otherwise */
-		int currentVolume;
+		/* Read CURRENT volume as percentage - frontend always expects 0-100 */
+		int volumePercent;
 		if (app->settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
-			currentVolume = BarSystemVolumeGet();
-			if (currentVolume < 0) currentVolume = 50;  /* Fallback */
+			volumePercent = BarSystemVolumeGet();
+			if (volumePercent < 0) volumePercent = 50;  /* Fallback */
 			debugPrint(DEBUG_WEBSOCKET, "WebSocket: Executing delayed volume broadcast - %d%% (system volume)\n", 
-			           currentVolume);
+			           volumePercent);
 		} else {
-			currentVolume = app->settings.volume;
-			debugPrint(DEBUG_WEBSOCKET, "WebSocket: Executing delayed volume broadcast - %ddB (player volume)\n", 
-			           currentVolume);
+			/* Player mode: convert dB to percentage for frontend */
+			volumePercent = BarSocketIoDbToSlider(app->settings.volume, app->settings.maxGain);
+			debugPrint(DEBUG_WEBSOCKET, "WebSocket: Executing delayed volume broadcast - %ddB → %d%% (player volume)\n", 
+			           app->settings.volume, volumePercent);
 		}
 		
 		/* Broadcast to all clients */
-		BarSocketIoEmitVolume(app, currentVolume);
+		BarSocketIoEmitVolume(app, volumePercent);
 	} else {
 		pthread_mutex_unlock(&ctx->volumeBroadcastMutex);
 	}

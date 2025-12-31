@@ -107,6 +107,20 @@ static int sliderToDb(int sliderPercent, int maxGain) {
 	}
 }
 
+/* Convert decibels (-40 to maxGain) to slider percentage (0-100)
+ * Inverse of sliderToDb - used when sending volume to frontend */
+int BarSocketIoDbToSlider(int db, int maxGain) {
+	if (db <= 0) {
+		/* Bottom half: -40 to 0 dB maps to 0-50% */
+		double normalized = 1.0 - sqrt((double)db / -40.0);
+		return (int)(normalized * 50.0);
+	} else {
+		/* Top half: 0 to maxGain dB maps to 50-100% */
+		double normalized = (double)db / (double)maxGain;
+		return (int)(50.0 + normalized * 50.0);
+	}
+}
+
 /* Action mapping: descriptive command name → action ID */
 typedef struct {
 	const char *descriptive;
@@ -580,18 +594,16 @@ void BarSocketIoEmitProcess(BarApp_t *app) {
 	pthread_mutex_unlock(&app->player.lock);
 	json_object_object_add(data, "paused", json_object_new_boolean(paused));
 	
-	/* Include current volume and volume mode */
-	int volume;
-	bool isSystemVolume = (app->settings.volumeMode == BAR_VOLUME_MODE_SYSTEM);
-	if (isSystemVolume) {
-		volume = BarSystemVolumeGet();
-		if (volume < 0) volume = 50;  /* Fallback */
+	/* Include current volume as 0-100 percentage (frontend always expects percentage) */
+	int volumePercent;
+	if (app->settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
+		volumePercent = BarSystemVolumeGet();
+		if (volumePercent < 0) volumePercent = 50;  /* Fallback */
 	} else {
-		volume = app->settings.volume;
+		/* Player mode: convert dB to percentage for frontend */
+		volumePercent = BarSocketIoDbToSlider(app->settings.volume, app->settings.maxGain);
 	}
-	json_object_object_add(data, "volume", json_object_new_int(volume));
-	json_object_object_add(data, "volumeMode", 
-	                       json_object_new_string(isSystemVolume ? "system" : "player"));
+	json_object_object_add(data, "volume", json_object_new_int(volumePercent));
 	
 	/* Include max gain configuration (only relevant for player mode) */
 	json_object_object_add(data, "maxGain", 

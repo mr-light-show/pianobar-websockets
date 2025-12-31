@@ -42,16 +42,16 @@ bool BarShouldSkipCliOutput(const BarApp_t *app) {
 /* Event broadcasts */
 void BarWsBroadcastVolume(BarApp_t *app) {
 	if (app && app->wsContext) {
-		int volume;
+		int volumePercent;
 		if (app->settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
-			/* In system mode, read current volume from OS */
-			volume = BarSystemVolumeGet();
-			if (volume < 0) volume = 50;  /* Fallback */
+			/* In system mode, read current volume from OS (already 0-100%) */
+			volumePercent = BarSystemVolumeGet();
+			if (volumePercent < 0) volumePercent = 50;  /* Fallback */
 		} else {
-			/* Player mode - use dB value */
-			volume = app->settings.volume;
+			/* Player mode - convert dB to percentage for frontend */
+			volumePercent = BarSocketIoDbToSlider(app->settings.volume, app->settings.maxGain);
 		}
-		BarSocketIoEmitVolume(app, volume);
+		BarSocketIoEmitVolume(app, volumePercent);
 	}
 }
 

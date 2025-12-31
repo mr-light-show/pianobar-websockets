@@ -33,9 +33,7 @@ export class PianobarApp extends LitElement {
   @state() private paused = false;
   @state() private currentTime = 0;
   @state() private totalTime = 0;
-  @state() private volume = 0;
-  @state() private maxGain = 10;
-  @state() private volumeMode: 'player' | 'system' = 'player';
+  @state() private volume = 50;
   @state() private rating = 0;
   @state() private stations: any[] = [];
   @state() private currentStation = '';
@@ -280,10 +278,12 @@ export class PianobarApp extends LitElement {
     // Volume event - update volume control when other clients change volume
     this.socket.on('volume', (data) => {
       const volumeValue = typeof data === 'number' ? data : data.volume;
-      const volumeControl = this.shadowRoot?.querySelector('volume-control');
-      if (volumeControl && volumeValue !== undefined) {
-        // Use updateFromServer which handles both modes correctly
-        (volumeControl as any).updateFromServer(volumeValue);
+      if (volumeValue !== undefined) {
+        this.volume = volumeValue;  // Keep parent state in sync
+        const volumeControl = this.shadowRoot?.querySelector('volume-control');
+        if (volumeControl) {
+          (volumeControl as any).updateFromServer(volumeValue);
+        }
       }
     });
     
@@ -373,25 +373,13 @@ export class PianobarApp extends LitElement {
         this.currentStationId = data.stationId;
       }
       
-      // Update volume and maxGain from config
+      // Update volume control if present
       if (data.volume !== undefined) {
         this.volume = data.volume;
-      }
-      if (data.maxGain !== undefined) {
-        this.maxGain = data.maxGain;
-      }
-      
-      // Update volume mode if present
-      if (data.volumeMode !== undefined) {
-        this.volumeMode = data.volumeMode;
-      }
-      
-      // Update volume control if present
-      const volumeControl = this.shadowRoot?.querySelector('volume-control');
-      if (volumeControl && data.volume !== undefined) {
-        // Set volume mode first, then update value
-        (volumeControl as any).volumeMode = this.volumeMode;
-        (volumeControl as any).updateFromServer(data.volume);
+        const volumeControl = this.shadowRoot?.querySelector('volume-control');
+        if (volumeControl) {
+          (volumeControl as any).updateFromServer(data.volume);
+        }
       }
     });
     
@@ -453,10 +441,9 @@ export class PianobarApp extends LitElement {
   }
   
   handleVolumeChange(e: CustomEvent) {
-    const { percent, db } = e.detail;
-    this.volume = db;  // Store dB for display
-    // Send percentage to backend
-    this.socket.emit('action', { action: 'volume.set', volume: percent });
+    const { volume } = e.detail;
+    this.volume = volume;
+    this.socket.emit('action', { action: 'volume.set', volume });
   }
   
   handleReconnect() {
@@ -814,9 +801,7 @@ export class PianobarApp extends LitElement {
         
         ${this.connected ? html`
           <volume-control
-            .volume="${50}"
-            .maxGain="${this.maxGain}"
-            .volumeMode="${this.volumeMode}"
+            .volume="${this.volume}"
             @volume-change=${this.handleVolumeChange}
           ></volume-control>
           
