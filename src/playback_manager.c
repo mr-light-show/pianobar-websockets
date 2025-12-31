@@ -21,9 +21,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
+/* Enable POSIX functions (pthread_kill, usleep) */
+#define _POSIX_C_SOURCE 200809L
+
 /* Playback state machine - runs in dedicated thread for WebSocket modes */
 
 #include "playback_manager.h"
+#include <signal.h>
+#include <unistd.h>
 #include "bar_state.h"
 #include "ui.h"
 #include "player.h"
