@@ -256,18 +256,18 @@ void BarSocketIoHandleMessage(BarApp_t *app, const char *message, void *wsi) {
 	if (strcmp(eventName, "action") == 0) {
 		if (data && json_object_is_type(data, json_type_string)) {
 			const char *action = json_object_get_string(data);
-			BarSocketIoHandleAction(app, action, NULL);
+			BarSocketIoHandleAction(app, action, NULL, wsi);
 		} else if (data && json_object_is_type(data, json_type_object)) {
 			json_object *actionObj;
 			if (json_object_object_get_ex(data, "action", &actionObj)) {
 				const char *action = json_object_get_string(actionObj);
 				if (action) {
-					BarSocketIoHandleAction(app, action, data);
+					BarSocketIoHandleAction(app, action, data, wsi);
 				}
 			} else if (json_object_object_get_ex(data, "command", &actionObj)) {
 				const char *action = json_object_get_string(actionObj);
 				if (action) {
-					BarSocketIoHandleAction(app, action, data);
+					BarSocketIoHandleAction(app, action, data, wsi);
 				}
 			}
 		}
@@ -1557,7 +1557,7 @@ void BarSocketIoHandleSearchMusic(BarApp_t *app, json_object *data) {
 }
 
 /* Handle 'action' event from client */
-void BarSocketIoHandleAction(BarApp_t *app, const char *action, json_object *data) {
+void BarSocketIoHandleAction(BarApp_t *app, const char *action, json_object *data, void *wsi) {
 	BarKeyShortcutId_t actionId;
 	
 	if (!app || !action || !app->wsContext) {
@@ -1603,10 +1603,22 @@ void BarSocketIoHandleAction(BarApp_t *app, const char *action, json_object *dat
 	debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Action '%s' → ID %d (executing directly)\n", 
 	           action, actionId);
 	
+	/* For query actions (explain, upcoming), set unicast target so response
+	 * only goes to the requesting client, not all clients */
+	bool useUnicast = (actionId == BAR_KS_EXPLAIN || actionId == BAR_KS_UPCOMING);
+	if (useUnicast && wsi) {
+		BarSocketIoSetUnicastTarget(wsi);
+	}
+	
 	/* Execute action directly by ID in WebSocket thread */
 	BarUiDispatchById(app, actionId, BarStateGetCurrentStation(app), 
 	                  BarStateGetPlaylist(app), false, 
 	                  BAR_DC_GLOBAL | BAR_DC_STATION | BAR_DC_SONG);
+	
+	/* Clear unicast target after query actions */
+	if (useUnicast) {
+		BarSocketIoSetUnicastTarget(NULL);
+	}
 	
 	/* Emit updated state for commands that change song state */
 	if (actionId == BAR_KS_LOVE || actionId == BAR_KS_BAN) {
