@@ -1,10 +1,18 @@
-# System Volume Control
+# System Volume Control & Pandora Disconnect/Reconnect
 
 ## Summary
 
-This PR adds support for controlling the operating system's master volume instead of the internal player gain. This allows pianobar to integrate with system volume controls (keyboard volume keys, menu bar, system preferences).
+This PR adds two major features:
 
-## Configuration
+1. **System Volume Control** - Control the operating system's master volume instead of internal player gain, allowing pianobar to integrate with system volume controls (keyboard volume keys, menu bar, system preferences).
+
+2. **Pandora Disconnect/Reconnect** - Commands to gracefully disconnect from Pandora without quitting pianobar, and reconnect later. Useful for pausing sessions or handling connection issues.
+
+---
+
+## Feature 1: System Volume Control
+
+### Configuration
 
 Add to `~/.config/pianobar/config`:
 
@@ -13,8 +21,6 @@ volume_mode = system    # Control system volume (0-100%)
 # or
 volume_mode = player    # Control player gain in dB (default)
 ```
-
-## Features
 
 ### Platform Support
 
@@ -31,14 +37,14 @@ volume_mode = player    # Control player gain in dB (default)
 4. **No state persistence** - System volume is not saved to config (OS manages it)
 5. **Graceful fallback** - If system volume unavailable, falls back to player mode with warning
 
-## Implementation
+### Implementation
 
-### New Files
+#### New Files
 
 - `src/system_volume.h` - API declarations and `BarVolumeModeType` enum
 - `src/system_volume.c` - Platform-specific implementations (~500 lines)
 
-### Backend Architecture
+#### Backend Architecture
 
 **macOS:**
 ```c
@@ -66,7 +72,7 @@ popen("amixer sget Master ...", "r");
 system("amixer sset Master 50%");
 ```
 
-### WebUI Integration
+#### WebUI Integration
 
 - **Volume mode awareness** - Frontend receives `volumeMode: "system" | "player"` from backend
 - **Display format:**
@@ -76,7 +82,7 @@ system("amixer sset Master 50%");
   - System mode: Backend sends 0-100%, frontend uses directly
   - Player mode: Backend sends dB, frontend converts to slider position
 
-### System Volume Polling
+#### System Volume Polling
 
 When `volume_mode = system`, the WebSocket thread polls the OS volume every 1 second:
 
@@ -104,9 +110,165 @@ This syncs the WebUI slider when the user changes volume via:
 - System menu bar / tray
 - Other applications
 
+#### Thread Safety
+
+The PulseAudio library backend (`libpulse`) uses a mutex to protect all operations:
+
+```c
+static pthread_mutex_t paMutex = PTHREAD_MUTEX_INITIALIZER;
+
+static int pulseaudioGetVolume(void) {
+    pthread_mutex_lock(&paMutex);
+    // ... PulseAudio operations ...
+    pthread_mutex_unlock(&paMutex);
+    return result;
+}
+```
+
+This is necessary because `BarSystemVolumeGet()` and `BarSystemVolumeSet()` can be called concurrently from:
+- **Main thread** - CLI volume keys (`BarUiActVolUp/Down/Reset`)
+- **WebSocket thread** - Remote commands and 1-second polling
+
+---
+
+## Feature 2: Pandora Disconnect/Reconnect
+
+### Overview
+
+Provides commands to disconnect from Pandora without quitting the application, and reconnect later. This is useful for:
+- Pausing a session without closing pianobar
+- Handling credential issues or network problems
+- Testing the WebSocket server without active Pandora connection
+
+### Commands
+
+#### CLI Keys
+
+| Key | Action | Visibility |
+|-----|--------|------------|
+| `D` | Disconnect from Pandora | Only when connected to Pandora |
+| `R` | Reconnect to Pandora | Only when disconnected from Pandora |
+
+#### WebSocket Actions
+
+| Action | Description |
+|--------|-------------|
+| `app.pandora-disconnect` | Stop playback, clear station/playlist, disconnect from Pandora |
+| `app.pandora-reconnect` | Re-authenticate with Pandora and fetch stations |
+
+**Example - Disconnect:**
+```javascript
+ws.send('2["action","app.pandora-disconnect"]');
+```
+Response: All WebSocket clients are disconnected. Clients automatically reconnect and receive fresh state (no station selected, not playing).
+
+**Example - Reconnect:**
+```javascript
+ws.send('2["action","app.pandora-reconnect"]');
+```
+Response: Re-authenticates with Pandora using saved credentials, fetches the station list, and broadcasts a `stations` event to all clients.
+
+### Implementation
+
+#### Context-Aware Dispatch
+
+New context flags determine which commands are available:
+
+```c
+typedef enum {
+    BAR_DC_UNDEFINED = 0,
+    BAR_DC_GLOBAL = 1,              /* top-level action */
+    BAR_DC_STATION = 2,             /* station selected */
+    BAR_DC_SONG = 4,                /* song selected */
+    BAR_DC_PANDORA_CONNECTED = 8,   /* connected to Pandora */
+    BAR_DC_PANDORA_DISCONNECTED = 16, /* disconnected from Pandora */
+} BarUiDispatchContext_t;
+```
+
+Commands are filtered based on connection state:
+- Most commands (play, pause, rate, etc.) require `BAR_DC_PANDORA_CONNECTED`
+- `D` (disconnect) requires `BAR_DC_PANDORA_CONNECTED`
+- `R` (reconnect) requires `BAR_DC_PANDORA_DISCONNECTED`
+- `q` (quit) always available
+
+#### State Detection
+
+```c
+bool BarStateIsPandoraConnected(BarApp_t *app) {
+    // User has a listenerId when logged in
+    return (app->ph.user.listenerId != NULL);
+}
+```
+
+#### Disconnect Action
+
+`BarUiActPandoraDisconnect()`:
+1. Stops playback (`BarUiDoPandoraDisconnect()`)
+2. Clears station list and current station
+3. Destroys Pandora handle (`PianoDestroy()`)
+4. Reinitializes Pandora handle (`PianoInit()`)
+5. Disconnects all WebSocket clients (they auto-reconnect)
+6. Broadcasts empty state to reconnected clients
+
+#### Reconnect Action
+
+`BarUiActPandoraReconnect()`:
+1. Re-authenticates with Pandora using stored credentials
+2. Fetches station list
+3. Broadcasts `stations` event to all WebSocket clients
+
+#### WebSocket Client Handling
+
+On disconnect, all WebSocket clients are gracefully closed:
+
+```c
+void BarWebsocketDisconnectAllClients(BarWsContext_t *ctx) {
+    for (int i = 0; i < ctx->connectionCount; i++) {
+        ctx->connections[i].pendingClose = true;
+        lws_callback_on_writable(ctx->connections[i].wsi);
+    }
+}
+```
+
+The `pendingClose` flag ensures proper WebSocket close handshake before disconnection.
+
+### WebUI Behavior
+
+When disconnected from Pandora:
+- Album art area shows "Not Connected to Pandora" message with reconnect button
+- All playback controls hidden
+- Bottom toolbar hidden
+- Station menu hidden
+
+When WebSocket disconnected:
+- Album art area shows "Connection Lost" message with reconnect button
+
+Both use a unified reconnect panel in the album art component:
+
+```typescript
+@customElement('album-art')
+export class AlbumArt extends LitElement {
+  @property({ type: Boolean }) showPandoraReconnect = false;
+  @property({ type: Boolean }) showWebsocketReconnect = false;
+  
+  render() {
+    if (this.showPandoraReconnect) {
+      return html`<div class="reconnect-panel">
+        <span class="icon material-icons">cloud_off</span>
+        <h3>Not Connected to Pandora</h3>
+        <button @click=${this.handlePandoraReconnect}>Reconnect</button>
+      </div>`;
+    }
+    // ...
+  }
+}
+```
+
+---
+
 ## Files Modified
 
-### Backend
+### Backend - System Volume
 
 | File | Changes |
 |------|---------|
@@ -122,14 +284,37 @@ This syncs the WebUI slider when the user changes volume via:
 | `src/websocket_bridge.c` | Read system volume for broadcasts |
 | `Makefile` | Added system_volume.c, platform-specific link flags |
 
+### Backend - Pandora Disconnect/Reconnect
+
+| File | Changes |
+|------|---------|
+| `src/settings.h` | Added `BAR_KS_PANDORA_DISCONNECT`, `BAR_KS_PANDORA_RECONNECT` |
+| `src/ui_act.c` | Implemented `BarUiActPandoraDisconnect`, `BarUiActPandoraReconnect` |
+| `src/ui_act.h` | Added function declarations |
+| `src/ui_dispatch.h` | Added `BAR_DC_PANDORA_CONNECTED/DISCONNECTED` context flags |
+| `src/bar_state.c` | Added `BarStateIsPandoraConnected()` |
+| `src/bar_state.h` | Added declaration |
+| `src/main.c` | Context-aware command dispatch |
+| `src/playback_manager.c` | Renamed stop function calls |
+| `src/websocket/core/websocket.c` | Added `BarWebsocketDisconnectAllClients()`, `pendingClose` handling |
+| `src/websocket/core/websocket.h` | Added `pendingClose` flag to connection struct |
+| `src/websocket/protocol/socketio.c` | Added action mappings, context-aware dispatch |
+| `src/websocket_bridge.c` | Added `BarWsBroadcastStations()` |
+| `WEBSOCKET_API.md` | Documented new commands |
+
 ### Frontend
 
 | File | Changes |
 |------|---------|
 | `webui/src/components/volume-control.ts` | Added `volumeMode` property, mode-aware display |
-| `webui/src/app.ts` | Track `volumeMode`, use `updateFromServer()` method |
+| `webui/src/components/album-art.ts` | Added reconnect panels for Pandora and WebSocket |
+| `webui/src/app.ts` | Handle reconnect states, conditional UI rendering |
+
+---
 
 ## Testing
+
+### System Volume
 
 ```bash
 # macOS - verify CoreAudio backend
@@ -152,31 +337,36 @@ This syncs the WebUI slider when the user changes volume via:
 # 3. Press ^ to reset to 50%
 ```
 
-## Thread Safety
+### Pandora Disconnect/Reconnect
 
-The PulseAudio library backend (`libpulse`) uses a mutex to protect all operations:
+```bash
+# Test disconnect
+# 1. Start pianobar, select a station
+# 2. Press 'D' in CLI
+# 3. Playback stops, stations clear
+# 4. Help menu shows only 'q', 'R', '!'
+# 5. WebUI shows "Not Connected to Pandora"
 
-```c
-static pthread_mutex_t paMutex = PTHREAD_MUTEX_INITIALIZER;
+# Test reconnect (CLI)
+# 1. While disconnected, press 'R'
+# 2. Should authenticate and fetch stations
+# 3. WebUI updates with station list
 
-static int pulseaudioGetVolume(void) {
-    pthread_mutex_lock(&paMutex);
-    // ... PulseAudio operations ...
-    pthread_mutex_unlock(&paMutex);
-    return result;
-}
+# Test reconnect (WebUI)
+# 1. While disconnected, click reconnect button in album art area
+# 2. Should authenticate and fetch stations
+# 3. Station list appears
+
+# Test WebSocket disconnect recovery
+# 1. While connected, restart pianobar server
+# 2. WebUI shows "Connection Lost" with reconnect button
+# 3. Click reconnect, connection restores
 ```
 
-This is necessary because `BarSystemVolumeGet()` and `BarSystemVolumeSet()` can be called concurrently from:
-- **Main thread** - CLI volume keys (`BarUiActVolUp/Down/Reset`)
-- **WebSocket thread** - Remote commands and 1-second polling
-
-Without the mutex, concurrent calls to `pa_mainloop_iterate()` or simultaneous access to `paVolume` could cause crashes or corrupted state.
-
-**Note:** The CLI fallbacks (`pactl`, `amixer`) and macOS backends (CoreAudio, osascript) are inherently thread-safe as they use separate process invocations or stateless API calls.
+---
 
 ## Stats
 
-- **New code:** ~600 lines (system_volume.c + modifications)
+- **New code:** ~800 lines (system_volume.c + pandora disconnect/reconnect)
 - **Platform support:** macOS (CoreAudio/osascript), Linux (PulseAudio/pactl/ALSA)
 - **CPU impact:** Negligible (~0.01ms per 1s poll for CoreAudio)
