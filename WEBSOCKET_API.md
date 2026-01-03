@@ -138,8 +138,8 @@ Sent in response to a `query` event or on initial connection. Contains complete 
 |-------|------|-------------|
 | `playing` | boolean | Whether a song is currently loaded |
 | `paused` | boolean | Whether playback is paused |
-| `volume` | number | Current volume in dB (-40 to +maxGain) |
-| `maxGain` | number | Maximum volume gain from config |
+| `volume` | number | Current volume as percentage (0-100) |
+| `maxGain` | number | Maximum volume gain from config (internal use) |
 | `station` | string | Current station name (empty string if none) |
 | `stationId` | string | Current station ID (empty string if none) |
 | `elapsed` | number | Current playback position in seconds (only if playing) |
@@ -151,7 +151,7 @@ Sent in response to a `query` event or on initial connection. Contains complete 
 {
   "playing": true,
   "paused": false,
-  "volume": -5,
+  "volume": 65,
   "maxGain": 10,
   "station": "Today's Hits Radio",
   "stationId": "3914377188324099182",
@@ -175,7 +175,7 @@ Sent in response to a `query` event or on initial connection. Contains complete 
 {
   "playing": false,
   "paused": false,
-  "volume": 0,
+  "volume": 50,
   "maxGain": 10,
   "station": "",
   "stationId": ""
@@ -264,12 +264,12 @@ Broadcast periodically during playback (typically every second).
 
 Broadcast when volume level changes.
 
-**Payload:** `number` - Volume in decibels (dB)
+**Payload:** `number` - Volume as percentage (0-100)
 
 **Example:**
 
 ```json
--10
+75
 ```
 
 ---
@@ -1040,7 +1040,7 @@ ws.send('2["action","playback.next"]');
 |--------|-------------|
 | `volume.up` | Increase volume by one step |
 | `volume.down` | Decrease volume by one step |
-| `volume.reset` | Reset volume to 0 dB |
+| `volume.reset` | Reset volume to 50% (default) |
 | `volume.set` | Set specific volume (requires object payload) |
 
 **Examples:**
@@ -1050,7 +1050,7 @@ ws.send('2["action","volume.up"]');
 ws.send('2["action","volume.down"]');
 ws.send('2["action","volume.reset"]');
 
-// Set volume to 75% (uses perceptual curve, see Volume System section)
+// Set volume to 75%
 ws.send('2["action",{"action":"volume.set","volume":75}]');
 ```
 
@@ -1093,12 +1093,30 @@ ws.send('2["action","query.upcoming"]');
 | Action | Description |
 |--------|-------------|
 | `app.quit` | Quit the pianobar application |
+| `app.pandora-disconnect` | Stop playback, clear station/playlist, disconnect from Pandora (does not quit) |
+| `app.pandora-reconnect` | Re-authenticate with Pandora and fetch stations (use after `app.pandora-disconnect`) |
 
-**Example:**
+**Example - Quit:**
 
 ```javascript
 ws.send('2["action","app.quit"]');
 ```
+
+**Example - Pandora Disconnect:**
+
+```javascript
+ws.send('2["action","app.pandora-disconnect"]');
+```
+
+**Response:** All WebSocket clients are disconnected. Clients should automatically reconnect and will receive fresh state (no station selected, not playing).
+
+**Example - Pandora Reconnect:**
+
+```javascript
+ws.send('2["action","app.pandora-reconnect"]');
+```
+
+**Response:** Re-authenticates with Pandora using saved credentials, fetches the station list, and broadcasts a `stations` event to all clients. Use this to recover from the logged-out state after `app.pandora-disconnect`.
 
 ---
 
@@ -1242,62 +1260,50 @@ interface FeedbackEntry {
 
 ## Volume System
 
-The volume system uses decibels (dB) internally with a perceptual curve for UI mapping.
+The volume API uses a simple 0-100 percentage scale for all communication between client and server.
 
 ### Range
 
-- **Minimum:** -40 dB (silent)
-- **Default:** 0 dB
-- **Maximum:** +maxGain dB (from config, typically 10)
+- **Minimum:** 0% (silent)
+- **Default:** 50%
+- **Maximum:** 100%
 
-### UI Slider Mapping (0-100%)
+### Wire Protocol
 
-The `volume.set` action accepts a percentage (0-100) that maps to dB using a perceptual curve:
+Both `volume.set` action and `volume` event use 0-100 percentage:
 
-| Slider % | dB Value | Description |
-|----------|----------|-------------|
+| Value | Description |
+|-------|-------------|
+| 0 | Silent |
+| 25 | Quiet |
+| 50 | Default |
+| 75 | Loud |
+| 100 | Maximum |
+
+### Internal Conversion (Player Mode)
+
+When `volume_mode = player` (the default), the backend converts between percentage and decibels (dB) internally using a perceptual curve. This conversion is handled entirely by the server—clients only need to work with 0-100 percentages.
+
+| Percentage | Internal dB | Description |
+|------------|-------------|-------------|
 | 0% | -40 dB | Silent |
-| 25% | -22.5 dB | Quiet |
-| 50% | 0 dB | Default |
-| 75% | +5 dB | Loud |
-| 100% | +maxGain dB | Maximum |
+| 25% | ~-10 dB | Quiet |
+| 50% | 0 dB | Unity gain |
+| 75% | ~+5 dB | Boosted |
+| 100% | +maxGain dB | Maximum boost |
 
-### Conversion Formula
+### System Volume Mode
 
-```javascript
-function sliderToDb(sliderPercent, maxGain = 10) {
-  if (sliderPercent <= 50) {
-    // Bottom half: -40 to 0 dB (quadratic curve for better perception)
-    const normalized = sliderPercent / 50;
-    return -40 * Math.pow(1 - normalized, 2);
-  } else {
-    // Top half: 0 to maxGain dB (linear)
-    const normalized = (sliderPercent - 50) / 50;
-    return maxGain * normalized;
-  }
-}
-
-function dbToSlider(db, maxGain = 10) {
-  if (db <= 0) {
-    // -40 to 0 dB maps to 0-50%
-    const normalized = 1 - Math.sqrt(-db / 40);
-    return normalized * 50;
-  } else {
-    // 0 to maxGain maps to 50-100%
-    const normalized = db / maxGain;
-    return 50 + normalized * 50;
-  }
-}
-```
+When `volume_mode = system` is configured, the percentage maps directly to the OS system volume (0-100%). No dB conversion is performed.
 
 ### Example
 
 ```javascript
-// Set volume to 75% (approximately +5 dB with maxGain=10)
+// Set volume to 75%
 ws.send('2["action",{"action":"volume.set","volume":75}]');
 
-// The server will emit a volume event with the dB value
-// { "volume": 5 }
+// The server will emit a volume event with the percentage
+// 75
 ```
 
 ---

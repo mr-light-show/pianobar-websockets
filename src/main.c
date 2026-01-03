@@ -57,6 +57,7 @@ THE SOFTWARE.
 #include "ui_dispatch.h"
 #include "bar_state.h"
 #include "playback_manager.h"
+#include "system_volume.h"
 
 #ifdef WEBSOCKET_ENABLED
 #include "websocket/core/websocket.h"
@@ -147,8 +148,14 @@ static bool BarMainGetLoginCredentials (BarSettings_t *settings,
 
 				close (pipeFd[1]);
 				memset (passBuf, 0, sizeof (passBuf));
-				read (pipeFd[0], passBuf, sizeof (passBuf)-1);
+				ssize_t bytesRead = read (pipeFd[0], passBuf, sizeof (passBuf)-1);
 				close (pipeFd[0]);
+
+				if (bytesRead < 0) {
+					BarUiMsg (settings, MSG_NONE, "Error reading password: %s\n", strerror (errno));
+					waitpid (chld, &status, 0);
+					return false;
+				}
 
 				/* drop trailing newlines */
 				ssize_t len = strlen (passBuf)-1;
@@ -221,8 +228,15 @@ static void BarMainHandleUserInput (BarApp_t *app) {
 	char buf[2];
 	if (BarReadline (buf, sizeof (buf), NULL, &app->input,
 			BAR_RL_FULLRETURN | BAR_RL_NOECHO | BAR_RL_NOINT, 1) > 0) {
+		/* Set context based on Pandora connection status */
+		BarUiDispatchContext_t context = BAR_DC_GLOBAL;
+		if (BarStateIsPandoraConnected(app)) {
+			context |= BAR_DC_PANDORA_CONNECTED;
+		} else {
+			context |= BAR_DC_PANDORA_DISCONNECTED;
+		}
 		BarUiDispatch (app, buf[0], BarStateGetCurrentStation(app), 
-				BarStateGetPlaylist(app), true, BAR_DC_GLOBAL);
+				BarStateGetPlaylist(app), true, context);
 	}
 }
 
@@ -529,6 +543,20 @@ int main (int argc, char **argv) {
 	BarSettingsInit (&app.settings);
 	BarSettingsRead (&app.settings);
 
+	/* Initialize system volume control if configured */
+	if (app.settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
+		if (BarSystemVolumeInit()) {
+			/* In system mode, keep player volume at 0dB (neutral).
+			 * The OS mixer controls actual volume, not the player's gain stage.
+			 * System volume is read directly when needed for display/broadcast. */
+			app.settings.volume = 0;  /* 0dB = no gain adjustment */
+		} else {
+			/* Fall back to player volume if system volume unavailable */
+			fprintf(stderr, "Warning: System volume control unavailable, falling back to player volume\n");
+			app.settings.volumeMode = BAR_VOLUME_MODE_PLAYER;
+		}
+	}
+
 	/* Daemonize EARLY if running in web-only mode - before any terminal/stdin setup */
 	if (!BarWsDaemonize(&app)) {
 		fprintf(stderr, "Failed to daemonize\n");
@@ -630,6 +658,9 @@ int main (int argc, char **argv) {
 	
 	/* Remove PID file if we created one */
 	BarWsRemovePidFile(&app);
+	
+	/* Cleanup system volume control */
+	BarSystemVolumeDestroy();
 	
 	BarStateDestroy (&app);
 	BarSettingsDestroy (&app.settings);

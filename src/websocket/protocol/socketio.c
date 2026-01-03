@@ -30,6 +30,7 @@ THE SOFTWARE.
 #include "../../ui.h"
 #include "../../ui_dispatch.h"
 #include "../../bar_state.h"
+#include "../../system_volume.h"
 #include "socketio.h"
 #include "error_messages.h"
 #include "../core/websocket.h"
@@ -106,6 +107,20 @@ static int sliderToDb(int sliderPercent, int maxGain) {
 	}
 }
 
+/* Convert decibels (-40 to maxGain) to slider percentage (0-100)
+ * Inverse of sliderToDb - used when sending volume to frontend */
+int BarSocketIoDbToSlider(int db, int maxGain) {
+	if (db <= 0) {
+		/* Bottom half: -40 to 0 dB maps to 0-50% */
+		double normalized = 1.0 - sqrt((double)db / -40.0);
+		return (int)(normalized * 50.0);
+	} else {
+		/* Top half: 0 to maxGain dB maps to 50-100% */
+		double normalized = (double)db / (double)maxGain;
+		return (int)(50.0 + normalized * 50.0);
+	}
+}
+
 /* Action mapping: descriptive command name → action ID */
 typedef struct {
 	const char *descriptive;
@@ -151,7 +166,9 @@ static const BarActionMapping_t actionMappings[] = {
 	
 	/* App */
 	{"app.quit", BAR_KS_QUIT},
+	{"app.pandora-disconnect", BAR_KS_PANDORA_DISCONNECT},
 	{"app.settings", BAR_KS_SETTINGS}, // Not implemented in websocekts - Changes don't persist, and are only temporary session changes
+	{"app.pandora-reconnect", BAR_KS_PANDORA_RECONNECT},
 	
 	{NULL, (BarKeyShortcutId_t)-1} /* terminator */
 };
@@ -579,11 +596,18 @@ void BarSocketIoEmitProcess(BarApp_t *app) {
 	pthread_mutex_unlock(&app->player.lock);
 	json_object_object_add(data, "paused", json_object_new_boolean(paused));
 	
-	/* Include current volume */
-	json_object_object_add(data, "volume", 
-	                       json_object_new_int(app->settings.volume));
+	/* Include current volume as 0-100 percentage (frontend always expects percentage) */
+	int volumePercent;
+	if (app->settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
+		volumePercent = BarSystemVolumeGet();
+		if (volumePercent < 0) volumePercent = 50;  /* Fallback */
+	} else {
+		/* Player mode: convert dB to percentage for frontend */
+		volumePercent = BarSocketIoDbToSlider(app->settings.volume, app->settings.maxGain);
+	}
+	json_object_object_add(data, "volume", json_object_new_int(volumePercent));
 	
-	/* Include max gain configuration */
+	/* Include max gain configuration (only relevant for player mode) */
 	json_object_object_add(data, "maxGain", 
 	                       json_object_new_int(app->settings.maxGain));
 	
@@ -1573,21 +1597,30 @@ void BarSocketIoHandleAction(BarApp_t *app, const char *action, json_object *dat
 			if (volumePercent < 0) volumePercent = 0;
 			if (volumePercent > 100) volumePercent = 100;
 			
-		/* Convert percentage to dB using perceptual curve */
-		int volumeDb = sliderToDb(volumePercent, app->settings.maxGain);
-		
-		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Action '%s' → volume=%ddB (%d%%)\n", 
-		           action, volumeDb, volumePercent);
-		
-		/* Apply volume immediately (for audio playback) */
-		app->settings.volume = volumeDb;
-		BarPlayerSetVolume(&app->player);
-		
-		/* Schedule debounced broadcast (will read current volume at broadcast time) */
-		BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
-		BarWsScheduleVolumeBroadcast(ctx, 500);  /* 500ms debounce */
-		
-		return;
+			if (app->settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
+				/* System volume mode - set OS volume directly as percentage.
+				 * Don't modify settings.volume - it stays at 0dB for the player. */
+				debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Action '%s' → system volume=%d%%\n", 
+				           action, volumePercent);
+				
+				BarSystemVolumeSet(volumePercent);
+			} else {
+				/* Player volume mode - convert percentage to dB using perceptual curve */
+				int volumeDb = sliderToDb(volumePercent, app->settings.maxGain);
+				
+				debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Action '%s' → volume=%ddB (%d%%)\n", 
+				           action, volumeDb, volumePercent);
+				
+				/* Apply volume immediately (for audio playback) */
+				app->settings.volume = volumeDb;
+				BarPlayerSetVolume(&app->player);
+			}
+			
+			/* Schedule debounced broadcast (will read current volume at broadcast time) */
+			BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
+			BarWsScheduleVolumeBroadcast(ctx, 500);  /* 500ms debounce */
+			
+			return;
 		}
 	}
 	
@@ -1603,6 +1636,14 @@ void BarSocketIoHandleAction(BarApp_t *app, const char *action, json_object *dat
 	debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Action '%s' → ID %d (executing directly)\n", 
 	           action, actionId);
 	
+	/* Set context based on Pandora connection status */
+	BarUiDispatchContext_t context = BAR_DC_GLOBAL | BAR_DC_STATION | BAR_DC_SONG;
+	if (BarStateIsPandoraConnected(app)) {
+		context |= BAR_DC_PANDORA_CONNECTED;
+	} else {
+		context |= BAR_DC_PANDORA_DISCONNECTED;
+	}
+
 	/* For query actions (explain, upcoming), set unicast target so response
 	 * only goes to the requesting client, not all clients */
 	bool useUnicast = (actionId == BAR_KS_EXPLAIN || actionId == BAR_KS_UPCOMING);
@@ -1612,8 +1653,7 @@ void BarSocketIoHandleAction(BarApp_t *app, const char *action, json_object *dat
 	
 	/* Execute action directly by ID in WebSocket thread */
 	BarUiDispatchById(app, actionId, BarStateGetCurrentStation(app), 
-	                  BarStateGetPlaylist(app), false, 
-	                  BAR_DC_GLOBAL | BAR_DC_STATION | BAR_DC_SONG);
+	                  BarStateGetPlaylist(app), false, context);
 	
 	/* Clear unicast target after query actions */
 	if (useUnicast) {
@@ -1661,6 +1701,7 @@ void BarSocketIoHandleChangeStation(BarApp_t *app, const char *stationId) {
 		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Station switch initiated\n");
 	} else {
 		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Station not found: %s\n", stationId);
+		BarSocketIoEmitError("station.change", "Station not found");
 	}
 }
 

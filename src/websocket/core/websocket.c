@@ -27,6 +27,7 @@ THE SOFTWARE.
 
 #include "../../main.h"
 #include "../../debug.h"
+#include "../../system_volume.h"
 #include "websocket.h"
 #include "../protocol/socketio.h"
 #include "../http/http_server.h"
@@ -270,6 +271,7 @@ static int callback_websocket(struct lws *wsi, enum lws_callback_reasons reason,
 			for (size_t i = 0; i < ctx->maxConnections; i++) {
 				if (ctx->connections[i].wsi == NULL) {
 					ctx->connections[i].wsi = wsi;
+					ctx->connections[i].pendingClose = false;
 					strncpy(ctx->connections[i].protocol, 
 					        lws_get_protocol(wsi)->name, 
 					        sizeof(ctx->connections[i].protocol) - 1);
@@ -297,6 +299,7 @@ static int callback_websocket(struct lws *wsi, enum lws_callback_reasons reason,
 			for (size_t i = 0; i < ctx->maxConnections; i++) {
 				if (ctx->connections[i].wsi == wsi) {
 					ctx->connections[i].wsi = NULL;
+					ctx->connections[i].pendingClose = false;
 					ctx->connections[i].protocol[0] = '\0';
 					ctx->numConnections--;
 					
@@ -324,6 +327,16 @@ static int callback_websocket(struct lws *wsi, enum lws_callback_reasons reason,
 			
 		case LWS_CALLBACK_SERVER_WRITEABLE:
 			/* Ready to send data to client */
+			
+			/* Check if this connection is marked for close */
+			if (app && app->wsContext) {
+				BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
+				for (size_t i = 0; i < ctx->maxConnections; i++) {
+					if (ctx->connections[i].wsi == wsi && ctx->connections[i].pendingClose) {
+						return -1;  /* Return -1 to close the connection */
+					}
+				}
+			}
 			break;
 			
 		default:
@@ -478,16 +491,60 @@ static void BarWsProcessVolumeBroadcast(BarWsContext_t *ctx, BarApp_t *app) {
 		ctx->delayedVolumeBroadcast.pending = false;
 		pthread_mutex_unlock(&ctx->volumeBroadcastMutex);
 		
-		/* Read CURRENT volume from settings (not stored value) */
-		int currentVolume = app->settings.volume;
+		/* Read CURRENT volume as percentage - frontend always expects 0-100 */
+		int volumePercent;
+		if (app->settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
+			volumePercent = BarSystemVolumeGet();
+			if (volumePercent < 0) volumePercent = 50;  /* Fallback */
+			debugPrint(DEBUG_WEBSOCKET, "WebSocket: Executing delayed volume broadcast - %d%% (system volume)\n", 
+			           volumePercent);
+		} else {
+			/* Player mode: convert dB to percentage for frontend */
+			volumePercent = BarSocketIoDbToSlider(app->settings.volume, app->settings.maxGain);
+			debugPrint(DEBUG_WEBSOCKET, "WebSocket: Executing delayed volume broadcast - %ddB → %d%% (player volume)\n", 
+			           app->settings.volume, volumePercent);
+		}
 		
-		debugPrint(DEBUG_WEBSOCKET, "WebSocket: Executing delayed volume broadcast - %ddB (current volume)\n", 
-		           currentVolume);
+		/* Broadcast to all clients */
+		BarSocketIoEmitVolume(app, volumePercent);
+	} else {
+		pthread_mutex_unlock(&ctx->volumeBroadcastMutex);
+	}
+}
+
+/* Poll system volume for external changes (keyboard keys, other apps)
+ * Called from WebSocket thread, checks every 1 second */
+static void BarWsPollSystemVolume(BarWsContext_t *ctx, BarApp_t *app) {
+	if (!ctx || !app) {
+		return;
+	}
+	
+	/* Only poll in system volume mode */
+	if (app->settings.volumeMode != BAR_VOLUME_MODE_SYSTEM) {
+		return;
+	}
+	
+	/* Check if 1 second has elapsed since last poll */
+	time_t now = time(NULL);
+	if (now - ctx->lastVolumePollTime < 1) {
+		return;  /* Too soon, skip this poll */
+	}
+	ctx->lastVolumePollTime = now;
+	
+	/* Read current system volume */
+	int currentVolume = BarSystemVolumeGet();
+	if (currentVolume < 0) {
+		return;  /* Error reading volume */
+	}
+	
+	/* Check if volume changed from last known value */
+	if (currentVolume != ctx->lastPolledVolume) {
+		debugPrint(DEBUG_WEBSOCKET, "WebSocket: System volume changed externally: %d%% → %d%%\n",
+		           ctx->lastPolledVolume, currentVolume);
+		ctx->lastPolledVolume = currentVolume;
 		
 		/* Broadcast to all clients */
 		BarSocketIoEmitVolume(app, currentVolume);
-	} else {
-		pthread_mutex_unlock(&ctx->volumeBroadcastMutex);
 	}
 }
 
@@ -547,6 +604,9 @@ static void* BarWebsocketThread(void *arg) {
 		
 		/* Process delayed volume broadcast (debouncing) */
 		BarWsProcessVolumeBroadcast(ctx, app);
+		
+		/* Poll system volume for external changes (every 1s) */
+		BarWsPollSystemVolume(ctx, app);
 		
 		/* NOTE: Progress broadcasting now handled by playback_manager thread
 		 * This ensures timing is independent of WebSocket servicing delays
@@ -612,6 +672,10 @@ bool BarWebsocketInit(BarApp_t *app) {
 	/* Initialize delayed volume broadcast */
 	ctx->delayedVolumeBroadcast.pending = false;
 	pthread_mutex_init(&ctx->volumeBroadcastMutex, NULL);
+	
+	/* Initialize system volume polling state */
+	ctx->lastPolledVolume = -1;  /* Unknown until first poll */
+	ctx->lastVolumePollTime = 0; /* Force immediate first poll */
 	
 	/* Set up Socket.IO broadcast callback */
 	BarSocketIoSetBroadcastCallback(BarWebsocketBroadcast);
@@ -860,5 +924,38 @@ void BarWebsocketHandleMessage(BarApp_t *app, const char *message,
 		/* Default to Socket.IO */
 		BarSocketIoHandleMessage(app, message, wsi);
 	}
+}
+
+/* Disconnect all WebSocket clients (used by app.stop) */
+void BarWebsocketDisconnectAllClients(BarApp_t *app) {
+	if (!app || !app->wsContext) {
+		return;
+	}
+	
+	BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
+	
+	debugPrint(DEBUG_WEBSOCKET, "WebSocket: Disconnecting all clients (%zu connected)\n", 
+	           ctx->numConnections);
+	
+	/* Close each connected client */
+	for (size_t i = 0; i < ctx->maxConnections; i++) {
+		if (ctx->connections[i].wsi != NULL) {
+			struct lws *wsi = (struct lws *)ctx->connections[i].wsi;
+			
+			debugPrint(DEBUG_WEBSOCKET, "WebSocket: Closing client %zu (wsi=%p)\n", i, wsi);
+			
+			/* Mark connection for close - will be handled in SERVER_WRITEABLE */
+			ctx->connections[i].pendingClose = true;
+			
+			/* Request close with "Going Away" status (1001) */
+			lws_close_reason(wsi, LWS_CLOSE_STATUS_GOINGAWAY, 
+			                 (unsigned char *)"Server stopping", 15);
+			
+			/* Trigger the close callback */
+			lws_callback_on_writable(wsi);
+		}
+	}
+	
+	debugPrint(DEBUG_WEBSOCKET, "WebSocket: All clients marked for disconnect\n");
 }
 

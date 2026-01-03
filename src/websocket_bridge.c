@@ -22,6 +22,7 @@ THE SOFTWARE.
 */
 
 #include "websocket_bridge.h"
+#include "system_volume.h"
 
 #ifdef WEBSOCKET_ENABLED
 #include "websocket/core/websocket.h"
@@ -41,7 +42,16 @@ bool BarShouldSkipCliOutput(const BarApp_t *app) {
 /* Event broadcasts */
 void BarWsBroadcastVolume(BarApp_t *app) {
 	if (app && app->wsContext) {
-		BarSocketIoEmitVolume(app, app->settings.volume);
+		int volumePercent;
+		if (app->settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
+			/* In system mode, read current volume from OS (already 0-100%) */
+			volumePercent = BarSystemVolumeGet();
+			if (volumePercent < 0) volumePercent = 50;  /* Fallback */
+		} else {
+			/* Player mode - convert dB to percentage for frontend */
+			volumePercent = BarSocketIoDbToSlider(app->settings.volume, app->settings.maxGain);
+		}
+		BarSocketIoEmitVolume(app, volumePercent);
 	}
 }
 
@@ -97,6 +107,12 @@ void BarWsBroadcastStations(BarApp_t *app) {
 	}
 }
 
+void BarWsDisconnectAllClients(BarApp_t *app) {
+	if (app && app->wsContext) {
+		BarWebsocketDisconnectAllClients(app);
+	}
+}
+
 /* Lifecycle management */
 bool BarWsInit(BarApp_t *app) {
 	if (app && app->settings.uiMode != BAR_UI_MODE_CLI) {
@@ -148,6 +164,7 @@ void BarWsBroadcastSongStop(BarApp_t *app) { (void)app; }
 void BarWsBroadcastProgress(BarApp_t *app) { (void)app; }
 void BarWsBroadcastPlayState(BarApp_t *app) { (void)app; }
 void BarWsBroadcastStations(BarApp_t *app) { (void)app; }
+void BarWsDisconnectAllClients(BarApp_t *app) { (void)app; }
 
 bool BarWsInit(BarApp_t *app) { (void)app; return true; }
 void BarWsDestroy(BarApp_t *app) { (void)app; }

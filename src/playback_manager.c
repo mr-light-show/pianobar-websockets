@@ -21,9 +21,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
+/* Enable POSIX functions (pthread_kill) and BSD/GNU extensions (usleep) */
+#define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
+
 /* Playback state machine - runs in dedicated thread for WebSocket modes */
 
 #include "playback_manager.h"
+#include <signal.h>
+#include <unistd.h>
 #include "bar_state.h"
 #include "ui.h"
 #include "player.h"
@@ -40,6 +46,9 @@ THE SOFTWARE.
 extern void BarMainGetPlaylist(BarApp_t *app);
 extern void BarMainStartPlayback(BarApp_t *app, pthread_t *playerThread);
 extern sig_atomic_t *interrupted;
+
+/* Forward declaration from ui_act.c (avoid circular include with ui_act.h) */
+extern void BarUiDoPandoraDisconnect(BarApp_t *app, const char *reason);
 
 static pthread_t g_playbackThread;
 static volatile bool g_running = false;
@@ -137,6 +146,23 @@ static void *BarPlaybackManagerThread(void *data) {
 				
 				if (mode == PLAYER_PLAYING && !isPaused) {
 					BarWsBroadcastProgress(app);
+				}
+			}
+		}
+		
+		/* Check for pause timeout (auto-stop after configured minutes of pause) */
+		if (app->settings.pauseTimeout > 0) {
+			pthread_mutex_lock(&app->player.lock);
+			bool isPaused = app->player.doPause;
+			time_t pauseStart = app->player.pauseStartTime;
+			pthread_mutex_unlock(&app->player.lock);
+			
+			if (isPaused && pauseStart > 0) {
+				time_t elapsed = time(NULL) - pauseStart;
+				if (elapsed >= (time_t)(app->settings.pauseTimeout * 60)) {
+					debugPrint(DEBUG_UI, "PlaybackMgr: Pause timeout expired (%u minutes), stopping\n",
+					           app->settings.pauseTimeout);
+					BarUiDoPandoraDisconnect(app, "idle_timeout");
 				}
 			}
 		}

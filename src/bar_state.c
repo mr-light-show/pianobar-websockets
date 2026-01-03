@@ -178,7 +178,12 @@ PianoStation_t *BarStateFindStationById(const BarApp_t *app, const char *id) {
 	PianoStation_t *station;
 	WITH_STATE_LOCK_RETURN(app, "FindStationById", station,
 	                       "id=%s -> %s", id ? id : "null", station ? station->name : "null") {
-		station = PianoFindStationById(app->ph.stations, id);
+		/* After app.stop, stations may be NULL - handle gracefully */
+		if (app->ph.stations == NULL) {
+			station = NULL;
+		} else {
+			station = PianoFindStationById(app->ph.stations, id);
+		}
 	}
 	return station;
 }
@@ -296,5 +301,14 @@ bool BarStateCallPandora(BarApp_t *app, PianoRequestType_t type,
 		result = BarUiPianoCall(app, type, data, pRet, wRet);
 	}
 	return result;
+}
+
+/*	Check if logged in to Pandora
+ */
+bool BarStateIsPandoraConnected(const BarApp_t *app) {
+	assert(app != NULL);
+	
+	/* User is connected if we have a listenerId from login */
+	return app->ph.user.listenerId != NULL;
 }
 

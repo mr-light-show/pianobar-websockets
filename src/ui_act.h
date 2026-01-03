@@ -53,6 +53,7 @@ BarUiActCallback(BarUiActTempBanSong);
 BarUiActCallback(BarUiActPrintUpcoming);
 BarUiActCallback(BarUiActSelectQuickMix);
 BarUiActCallback(BarUiActQuit);
+BarUiActCallback(BarUiActPandoraDisconnect);
 BarUiActCallback(BarUiActDebug);
 BarUiActCallback(BarUiActHistory);
 BarUiActCallback(BarUiActBookmark);
@@ -61,9 +62,13 @@ BarUiActCallback(BarUiActVolUp);
 BarUiActCallback(BarUiActManageStation);
 BarUiActCallback(BarUiActVolReset);
 BarUiActCallback(BarUiActSettings);
+BarUiActCallback(BarUiActPandoraReconnect);
 
 /* Switch to a station programmatically (for WebSocket use) */
 void BarUiSwitchStation (BarApp_t * const app, PianoStation_t * const station);
+
+/* Disconnect from Pandora - shared by BarUiActPandoraDisconnect and idle timeout */
+void BarUiDoPandoraDisconnect(BarApp_t *app, const char *reason);
 
 /* Transform station if shared (for WebSocket use) */
 int BarTransformIfShared (BarApp_t *app, PianoStation_t *station);

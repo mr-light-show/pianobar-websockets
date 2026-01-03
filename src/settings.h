@@ -59,8 +59,10 @@ typedef enum {
 	BAR_KS_PAUSE = 27,
 	BAR_KS_VOLRESET = 28,
 	BAR_KS_SETTINGS = 29,
+	BAR_KS_PANDORA_DISCONNECT = 30,
+	BAR_KS_PANDORA_RECONNECT = 31,
 	/* insert new shortcuts _before_ this element and increase its value */
-	BAR_KS_COUNT = 30,
+	BAR_KS_COUNT = 32,
 } BarKeyShortcutId_t;
 
 #define BAR_KS_DISABLED '\x00'
@@ -91,10 +93,15 @@ typedef enum {
 } BarUiMode_t;
 #endif
 
+/* Volume control mode - defined outside WEBSOCKET_ENABLED since it's independent */
+#include "system_volume.h"
+
 typedef struct {
 	bool autoselect;
 	unsigned int history, maxRetry, timeout, bufferSecs;
+	unsigned int pauseTimeout;  /* minutes before auto-stop when paused, 0 = disabled */
 	int volume;
+	BarVolumeModeType volumeMode;
 	float gainMul;
 	int maxGain;
 	BarStationSorting_t sortOrder;

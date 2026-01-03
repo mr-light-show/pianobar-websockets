@@ -23,33 +23,30 @@ THE SOFTWARE.
 
 #pragma once
 
-#include "main.h"
+#include <stdbool.h>
 
-/* WebSocket bridge functions
- * These functions are no-ops when WEBSOCKET_ENABLED is not defined
- */
+/* Volume control mode */
+typedef enum {
+	BAR_VOLUME_MODE_PLAYER = 0,  /* Player gain control (default) */
+	BAR_VOLUME_MODE_SYSTEM = 1   /* System mixer volume */
+} BarVolumeModeType;
 
-/* Mode predicates - return false when WebSocket is disabled */
-bool BarIsWebOnlyMode(const BarApp_t *app);
-bool BarShouldSkipCliOutput(const BarApp_t *app);
+/* Initialize system volume backend (call at startup)
+ * Returns true if system volume control is available */
+bool BarSystemVolumeInit(void);
 
-/* Event broadcasts */
-void BarWsBroadcastVolume(BarApp_t *app);
-void BarWsBroadcastExplanation(BarApp_t *app, const char *explanation);
-void BarWsBroadcastUpcoming(BarApp_t *app, PianoSong_t *songs, int count);
-void BarWsBroadcastSongStart(BarApp_t *app);
-void BarWsBroadcastSongStop(BarApp_t *app);
-void BarWsBroadcastProgress(BarApp_t *app);
-void BarWsBroadcastPlayState(BarApp_t *app);
-void BarWsBroadcastStations(BarApp_t *app);
-void BarWsDisconnectAllClients(BarApp_t *app);
+/* Cleanup system volume resources */
+void BarSystemVolumeDestroy(void);
 
-/* Lifecycle management */
-bool BarWsInit(BarApp_t *app);
-void BarWsDestroy(BarApp_t *app);
-bool BarWsDaemonize(BarApp_t *app);
-void BarWsRemovePidFile(BarApp_t *app);
+/* Get current system volume as 0-100 percentage
+ * Returns -1 on error */
+int BarSystemVolumeGet(void);
 
-/* Command processing */
-void BarWsProcessCommands(BarApp_t *app);
+/* Set system volume as 0-100 percentage
+ * Returns true on success */
+bool BarSystemVolumeSet(int percent);
+
+/* Check if system volume control is available
+ * (backend initialized successfully) */
+bool BarSystemVolumeAvailable(void);
 

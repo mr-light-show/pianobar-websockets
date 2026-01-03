@@ -60,6 +60,9 @@ typedef struct {
 	unsigned int songDuration;
 	unsigned int songPlayed;
 
+	/* Pause timeout tracking */
+	time_t pauseStartTime;  /* When pause began (0 = not paused or timer cleared) */
+
 	BarPlayerMode mode;
 
 	/* private attributes _not_ protected by mutex */
