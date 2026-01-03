@@ -1642,6 +1642,7 @@ void BarSocketIoHandleAction(BarApp_t *app, const char *action, json_object *dat
 		context |= BAR_DC_PANDORA_CONNECTED;
 	} else {
 		context |= BAR_DC_PANDORA_DISCONNECTED;
+	}
 
 	/* For query actions (explain, upcoming), set unicast target so response
 	 * only goes to the requesting client, not all clients */
