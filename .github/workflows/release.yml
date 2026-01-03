@@ -43,6 +43,7 @@ jobs:
             libavutil-dev \
             libswresample-dev \
             libwebsockets-dev \
+            libasound2-dev \
             check \
             nodejs \
             npm
@@ -80,6 +81,7 @@ jobs:
                 libavutil-dev \
                 libswresample-dev \
                 libwebsockets-dev \
+                libasound2-dev \
                 check \
                 nodejs \
                 npm && \

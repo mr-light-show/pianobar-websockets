@@ -85,12 +85,14 @@ ifeq (${OS},Darwin)
 	# macOS - CoreAudio is always available
 	SYSVOLUME_LDFLAGS:=-framework CoreAudio -framework AudioToolbox
 else ifeq (${OS},Linux)
-	# Linux - try PulseAudio library, fallback to CLI tools at runtime
+	# Linux - try PulseAudio library, always link ALSA for fallback
 	HAVE_PULSEAUDIO:=$(shell $(PKG_CONFIG) --exists libpulse && echo yes)
 	ifeq (${HAVE_PULSEAUDIO},yes)
 		SYSVOLUME_CFLAGS:=$(shell $(PKG_CONFIG) --cflags libpulse) -DHAVE_PULSEAUDIO
 		SYSVOLUME_LDFLAGS:=$(shell $(PKG_CONFIG) --libs libpulse)
 	endif
+	# Always link ALSA on Linux (for native API fallback)
+	SYSVOLUME_LDFLAGS+=$(shell $(PKG_CONFIG) --libs alsa)
 endif
 
 # WebSocket library flags (if enabled)

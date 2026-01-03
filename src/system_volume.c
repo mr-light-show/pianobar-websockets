@@ -185,6 +185,8 @@ static bool macosSetVolume(int percent) {
  */
 #elif defined(__linux__)
 
+#include <alsa/asoundlib.h>
+
 #ifdef HAVE_PULSEAUDIO
 #include <pulse/pulseaudio.h>
 #include <pulse/simple.h>
@@ -373,27 +375,78 @@ static bool pactlSetVolume(int percent) {
 	return system(cmd) == 0;
 }
 
-/* ALSA fallback: Get volume */
+/* ALSA native: Get volume using libasound */
 static int alsaGetVolume(void) {
-	FILE *fp = popen("amixer sget Master 2>/dev/null | grep -oP '\\d+%' | head -1 | tr -d '%'", "r");
-	if (!fp) {
+	snd_mixer_t *handle;
+	snd_mixer_elem_t *elem;
+	snd_mixer_selem_id_t *sid;
+	long min, max, volume;
+	int percent;
+	
+	if (snd_mixer_open(&handle, 0) < 0)
 		return -1;
-	}
+	if (snd_mixer_attach(handle, "default") < 0)
+		goto error;
+	if (snd_mixer_selem_register(handle, NULL, NULL) < 0)
+		goto error;
+	if (snd_mixer_load(handle) < 0)
+		goto error;
 	
-	int volume = -1;
-	if (fscanf(fp, "%d", &volume) != 1) {
-		volume = -1;
-	}
-	pclose(fp);
+	snd_mixer_selem_id_alloca(&sid);
+	snd_mixer_selem_id_set_index(sid, 0);
+	snd_mixer_selem_id_set_name(sid, "Master");
 	
-	return volume;
+	elem = snd_mixer_find_selem(handle, sid);
+	if (!elem)
+		goto error;
+	
+	snd_mixer_selem_get_playback_volume_range(elem, &min, &max);
+	snd_mixer_selem_get_playback_volume(elem, SND_MIXER_SCHN_MONO, &volume);
+	
+	percent = (int)(((volume - min) * 100) / (max - min));
+	
+	snd_mixer_close(handle);
+	return percent;
+	
+error:
+	snd_mixer_close(handle);
+	return -1;
 }
 
-/* ALSA fallback: Set volume */
+/* ALSA native: Set volume using libasound */
 static bool alsaSetVolume(int percent) {
-	char cmd[128];
-	snprintf(cmd, sizeof(cmd), "amixer sset Master %d%% >/dev/null 2>&1", percent);
-	return system(cmd) == 0;
+	snd_mixer_t *handle;
+	snd_mixer_elem_t *elem;
+	snd_mixer_selem_id_t *sid;
+	long min, max, volume;
+	
+	if (snd_mixer_open(&handle, 0) < 0)
+		return false;
+	if (snd_mixer_attach(handle, "default") < 0)
+		goto error;
+	if (snd_mixer_selem_register(handle, NULL, NULL) < 0)
+		goto error;
+	if (snd_mixer_load(handle) < 0)
+		goto error;
+	
+	snd_mixer_selem_id_alloca(&sid);
+	snd_mixer_selem_id_set_index(sid, 0);
+	snd_mixer_selem_id_set_name(sid, "Master");
+	
+	elem = snd_mixer_find_selem(handle, sid);
+	if (!elem)
+		goto error;
+	
+	snd_mixer_selem_get_playback_volume_range(elem, &min, &max);
+	volume = min + ((max - min) * percent) / 100;
+	snd_mixer_selem_set_playback_volume_all(elem, volume);
+	
+	snd_mixer_close(handle);
+	return true;
+	
+error:
+	snd_mixer_close(handle);
+	return false;
 }
 
 /* Linux initialization - try backends in order of preference */
