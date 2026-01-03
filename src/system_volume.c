@@ -185,6 +185,7 @@ static bool macosSetVolume(int percent) {
  */
 #elif defined(__linux__)
 
+#include <alloca.h>
 #include <alsa/asoundlib.h>
 
 #ifdef HAVE_PULSEAUDIO
