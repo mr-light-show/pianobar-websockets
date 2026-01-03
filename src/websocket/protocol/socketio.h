@@ -93,7 +93,7 @@ void BarSocketIoEmitPlayState(BarApp_t *app);
 void BarSocketIoEmitUpcoming(BarApp_t *app, struct PianoSong *firstSong, int maxSongs);
 
 /* Handle 'action' event from client */
-void BarSocketIoHandleAction(BarApp_t *app, const char *action, struct json_object *data);
+void BarSocketIoHandleAction(BarApp_t *app, const char *action, struct json_object *data, void *wsi);
 
 /* Handle 'changeStation' event from client */
 void BarSocketIoHandleChangeStation(BarApp_t *app, const char *stationId);

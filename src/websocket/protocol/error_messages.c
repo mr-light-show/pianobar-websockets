@@ -103,4 +103,3 @@ const char* BarWsGetFriendlyErrorMessage(const char *operation, const char *orig
 	/* If we don't recognize the operation, return the original error */
 	return originalError;
 }
-
