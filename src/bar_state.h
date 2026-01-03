@@ -53,3 +53,6 @@ bool BarStateGetPlayerPaused(const BarApp_t *app);
 bool BarStateCallPandora(BarApp_t *app, PianoRequestType_t type,
                          void *data, PianoReturn_t *pRet, CURLcode *wRet);
 
+/* Check if logged in to Pandora */
+bool BarStateIsPandoraConnected(const BarApp_t *app);
+

@@ -228,8 +228,15 @@ static void BarMainHandleUserInput (BarApp_t *app) {
 	char buf[2];
 	if (BarReadline (buf, sizeof (buf), NULL, &app->input,
 			BAR_RL_FULLRETURN | BAR_RL_NOECHO | BAR_RL_NOINT, 1) > 0) {
+		/* Set context based on Pandora connection status */
+		BarUiDispatchContext_t context = BAR_DC_GLOBAL;
+		if (BarStateIsPandoraConnected(app)) {
+			context |= BAR_DC_PANDORA_CONNECTED;
+		} else {
+			context |= BAR_DC_PANDORA_DISCONNECTED;
+		}
 		BarUiDispatch (app, buf[0], BarStateGetCurrentStation(app), 
-				BarStateGetPlaylist(app), true, BAR_DC_GLOBAL);
+				BarStateGetPlaylist(app), true, context);
 	}
 }
 

@@ -166,7 +166,9 @@ static const BarActionMapping_t actionMappings[] = {
 	
 	/* App */
 	{"app.quit", BAR_KS_QUIT},
+	{"app.pandora-disconnect", BAR_KS_PANDORA_DISCONNECT},
 	{"app.settings", BAR_KS_SETTINGS}, // Not implemented in websocekts - Changes don't persist, and are only temporary session changes
+	{"app.pandora-reconnect", BAR_KS_PANDORA_RECONNECT},
 	
 	{NULL, (BarKeyShortcutId_t)-1} /* terminator */
 };
@@ -1634,10 +1636,17 @@ void BarSocketIoHandleAction(BarApp_t *app, const char *action, json_object *dat
 	debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Action '%s' → ID %d (executing directly)\n", 
 	           action, actionId);
 	
+	/* Set context based on Pandora connection status */
+	BarUiDispatchContext_t context = BAR_DC_GLOBAL | BAR_DC_STATION | BAR_DC_SONG;
+	if (BarStateIsPandoraConnected(app)) {
+		context |= BAR_DC_PANDORA_CONNECTED;
+	} else {
+		context |= BAR_DC_PANDORA_DISCONNECTED;
+	}
+	
 	/* Execute action directly by ID in WebSocket thread */
 	BarUiDispatchById(app, actionId, BarStateGetCurrentStation(app), 
-	                  BarStateGetPlaylist(app), false, 
-	                  BAR_DC_GLOBAL | BAR_DC_STATION | BAR_DC_SONG);
+	                  BarStateGetPlaylist(app), false, context);
 	
 	/* Emit updated state for commands that change song state */
 	if (actionId == BAR_KS_LOVE || actionId == BAR_KS_BAN) {
@@ -1680,6 +1689,7 @@ void BarSocketIoHandleChangeStation(BarApp_t *app, const char *stationId) {
 		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Station switch initiated\n");
 	} else {
 		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Station not found: %s\n", stationId);
+		BarSocketIoEmitError("station.change", "Station not found");
 	}
 }
 

@@ -58,6 +58,7 @@ The volume system uses a perceptual curve for smoother control:
 | `autoselect` | `true` | Auto-select station on startup |
 | `autostart_station` | (none) | Station ID to auto-start. Set to empty (`autostart_station = `) to prevent auto-play and wait for manual selection. |
 | `history` | `5` | Number of songs to keep in history |
+| `pause_timeout` | `30` (minutes) | Auto-stop after this many minutes of pause. Set to `0` to disable. When triggered, clears playlist/station and disconnects from Pandora. |
 | `sort` | `name_az` | Station sort order (see below) |
 | `love_icon` | ` <3` | Icon for loved songs |
 | `ban_icon` | ` </3` | Icon for banned songs |

@@ -111,6 +111,7 @@ void BarPlayerDestroy (player_t * const p) {
 void BarPlayerReset (player_t * const p) {
 	p->doQuit = false;
 	p->doPause = false;
+	p->pauseStartTime = 0;
 	p->songDuration = 0;
 	p->songPlayed = 0;
 	p->mode = PLAYER_DEAD;

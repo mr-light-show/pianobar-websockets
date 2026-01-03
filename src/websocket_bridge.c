@@ -99,6 +99,12 @@ void BarWsBroadcastStations(BarApp_t *app) {
 	}
 }
 
+void BarWsDisconnectAllClients(BarApp_t *app) {
+	if (app && app->wsContext) {
+		BarWebsocketDisconnectAllClients(app);
+	}
+}
+
 /* Lifecycle management */
 bool BarWsInit(BarApp_t *app) {
 	if (app && app->settings.uiMode != BAR_UI_MODE_CLI) {
@@ -150,6 +156,7 @@ void BarWsBroadcastSongStop(BarApp_t *app) { (void)app; }
 void BarWsBroadcastProgress(BarApp_t *app) { (void)app; }
 void BarWsBroadcastPlayState(BarApp_t *app) { (void)app; }
 void BarWsBroadcastStations(BarApp_t *app) { (void)app; }
+void BarWsDisconnectAllClients(BarApp_t *app) { (void)app; }
 
 bool BarWsInit(BarApp_t *app) { (void)app; return true; }
 void BarWsDestroy(BarApp_t *app) { (void)app; }

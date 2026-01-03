@@ -1093,12 +1093,30 @@ ws.send('2["action","query.upcoming"]');
 | Action | Description |
 |--------|-------------|
 | `app.quit` | Quit the pianobar application |
+| `app.pandora-disconnect` | Stop playback, clear station/playlist, disconnect from Pandora (does not quit) |
+| `app.pandora-reconnect` | Re-authenticate with Pandora and fetch stations (use after `app.pandora-disconnect`) |
 
-**Example:**
+**Example - Quit:**
 
 ```javascript
 ws.send('2["action","app.quit"]');
 ```
+
+**Example - Pandora Disconnect:**
+
+```javascript
+ws.send('2["action","app.pandora-disconnect"]');
+```
+
+**Response:** All WebSocket clients are disconnected. Clients should automatically reconnect and will receive fresh state (no station selected, not playing).
+
+**Example - Pandora Reconnect:**
+
+```javascript
+ws.send('2["action","app.pandora-reconnect"]');
+```
+
+**Response:** Re-authenticates with Pandora using saved credentials, fetches the station list, and broadcasts a `stations` event to all clients. Use this to recover from the logged-out state after `app.pandora-disconnect`.
 
 ---
 

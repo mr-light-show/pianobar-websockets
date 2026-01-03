@@ -52,6 +52,7 @@ typedef struct {
 typedef struct {
 	void *wsi;                    /* libwebsockets instance */
 	bool authenticated;           /* Authentication status */
+	bool pendingClose;            /* Connection marked for close (app.stop) */
 	char protocol[64];            /* Protocol: "socketio" or "homeassistant" */
 } BarWsConnection_t;
 
@@ -120,6 +121,9 @@ void BarWebsocketHandleMessage(BarApp_t *app, const char *message,
 
 /* Schedule delayed volume broadcast (for debouncing) */
 void BarWsScheduleVolumeBroadcast(BarWsContext_t *ctx, int delayMs);
+
+/* Disconnect all WebSocket clients (used by app.stop) */
+void BarWebsocketDisconnectAllClients(BarApp_t *app);
 
 #endif /* _WEBSOCKET_H */
 

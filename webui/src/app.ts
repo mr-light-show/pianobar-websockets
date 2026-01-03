@@ -19,6 +19,7 @@ import './components/station-mode-modal';
 import './components/station-seeds-modal';
 import './components/song-actions-menu';
 import './components/info-menu';
+import './components/login-screen';
 
 @customElement('pianobar-app')
 export class PianobarApp extends LitElement {
@@ -262,7 +263,7 @@ export class PianobarApp extends LitElement {
       this.totalTime = 0;
       // Keep song info visible until next song starts
     });
-    
+
     this.socket.on('progress', (data) => {
       this.currentTime = data.elapsed;
       this.totalTime = data.duration;
@@ -450,6 +451,15 @@ export class PianobarApp extends LitElement {
     this.socket.reconnect();
   }
   
+  handlePandoraReconnect() {
+    this.socket.emit('action', 'app.pandora-reconnect');
+  }
+
+  /** Check if connected to WebSocket but logged out from Pandora */
+  private get isLoggedOutFromPandora(): boolean {
+    return this.connected && this.stations.length === 0 && !this.playing;
+  }
+
   toggleMenu() {
     const menu = this.shadowRoot?.querySelector('info-menu');
     if (menu) {
@@ -786,6 +796,10 @@ export class PianobarApp extends LitElement {
         
         <album-art 
           src="${this.connected ? this.albumArt : ''}"
+          ?showWebsocketReconnect="${!this.connected}"
+          ?showPandoraReconnect="${this.isLoggedOutFromPandora}"
+          @websocket-reconnect=${this.handleReconnect}
+          @pandora-reconnect=${this.handlePandoraReconnect}
         ></album-art>
         
         <div class="song-info">
@@ -799,7 +813,7 @@ export class PianobarApp extends LitElement {
           total="${this.connected ? this.totalTime : 0}"
         ></progress-bar>
         
-        ${this.connected ? html`
+        ${this.connected && !this.isLoggedOutFromPandora ? html`
           <volume-control
             .volume="${this.volume}"
             @volume-change=${this.handleVolumeChange}
@@ -833,14 +847,10 @@ export class PianobarApp extends LitElement {
               @next=${this.handleNext}
             ></playback-controls>
           </div>
-        ` : html`
-          <reconnect-button 
-            @reconnect=${this.handleReconnect}
-          ></reconnect-button>
-        `}
+        ` : ''}
       </div>
       
-      ${this.connected ? html`
+      ${this.connected && !this.isLoggedOutFromPandora ? html`
         <bottom-toolbar
           .stations="${this.stations}"
           currentStation="${this.currentStation}"

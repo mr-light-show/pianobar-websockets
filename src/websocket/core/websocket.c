@@ -271,6 +271,7 @@ static int callback_websocket(struct lws *wsi, enum lws_callback_reasons reason,
 			for (size_t i = 0; i < ctx->maxConnections; i++) {
 				if (ctx->connections[i].wsi == NULL) {
 					ctx->connections[i].wsi = wsi;
+					ctx->connections[i].pendingClose = false;
 					strncpy(ctx->connections[i].protocol, 
 					        lws_get_protocol(wsi)->name, 
 					        sizeof(ctx->connections[i].protocol) - 1);
@@ -298,6 +299,7 @@ static int callback_websocket(struct lws *wsi, enum lws_callback_reasons reason,
 			for (size_t i = 0; i < ctx->maxConnections; i++) {
 				if (ctx->connections[i].wsi == wsi) {
 					ctx->connections[i].wsi = NULL;
+					ctx->connections[i].pendingClose = false;
 					ctx->connections[i].protocol[0] = '\0';
 					ctx->numConnections--;
 					
@@ -325,6 +327,16 @@ static int callback_websocket(struct lws *wsi, enum lws_callback_reasons reason,
 			
 		case LWS_CALLBACK_SERVER_WRITEABLE:
 			/* Ready to send data to client */
+			
+			/* Check if this connection is marked for close */
+			if (app && app->wsContext) {
+				BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
+				for (size_t i = 0; i < ctx->maxConnections; i++) {
+					if (ctx->connections[i].wsi == wsi && ctx->connections[i].pendingClose) {
+						return -1;  /* Return -1 to close the connection */
+					}
+				}
+			}
 			break;
 			
 		default:
@@ -912,5 +924,38 @@ void BarWebsocketHandleMessage(BarApp_t *app, const char *message,
 		/* Default to Socket.IO */
 		BarSocketIoHandleMessage(app, message, wsi);
 	}
+}
+
+/* Disconnect all WebSocket clients (used by app.stop) */
+void BarWebsocketDisconnectAllClients(BarApp_t *app) {
+	if (!app || !app->wsContext) {
+		return;
+	}
+	
+	BarWsContext_t *ctx = (BarWsContext_t *)app->wsContext;
+	
+	debugPrint(DEBUG_WEBSOCKET, "WebSocket: Disconnecting all clients (%zu connected)\n", 
+	           ctx->numConnections);
+	
+	/* Close each connected client */
+	for (size_t i = 0; i < ctx->maxConnections; i++) {
+		if (ctx->connections[i].wsi != NULL) {
+			struct lws *wsi = (struct lws *)ctx->connections[i].wsi;
+			
+			debugPrint(DEBUG_WEBSOCKET, "WebSocket: Closing client %zu (wsi=%p)\n", i, wsi);
+			
+			/* Mark connection for close - will be handled in SERVER_WRITEABLE */
+			ctx->connections[i].pendingClose = true;
+			
+			/* Request close with "Going Away" status (1001) */
+			lws_close_reason(wsi, LWS_CLOSE_STATUS_GOINGAWAY, 
+			                 (unsigned char *)"Server stopping", 15);
+			
+			/* Trigger the close callback */
+			lws_callback_on_writable(wsi);
+		}
+	}
+	
+	debugPrint(DEBUG_WEBSOCKET, "WebSocket: All clients marked for disconnect\n");
 }
 

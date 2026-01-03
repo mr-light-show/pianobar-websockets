@@ -173,6 +173,7 @@ void BarSettingsRead (BarSettings_t *settings) {
 	settings->history = 5;
 	settings->volume = 0;
 	settings->timeout = 30; /* seconds */
+	settings->pauseTimeout = 30; /* minutes, 0 = disabled */
 	settings->gainMul = 1.0;
 	settings->maxGain = 10;
 	/* should be > 4, otherwise expired audio urls (403) can stop playback */
@@ -359,6 +360,8 @@ void BarSettingsRead (BarSettings_t *settings) {
 				settings->maxRetry = atoi (val);
 			} else if (streq ("timeout", key)) {
 				settings->timeout = atoi (val);
+			} else if (streq ("pause_timeout", key)) {
+				settings->pauseTimeout = atoi (val);
 			} else if (streq ("buffer_seconds", key)) {
 				settings->bufferSecs = atoi (val);
 			} else if (streq ("sort", key)) {

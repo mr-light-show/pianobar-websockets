@@ -30,6 +30,7 @@ THE SOFTWARE.
 #include <pthread.h>
 #include <assert.h>
 #include <string.h>
+#include <time.h>
 
 #include "ui.h"
 #include "ui_readline.h"
@@ -59,6 +60,7 @@ static inline void BarUiDoSkipSong (player_t * const player) {
 	pthread_mutex_lock (&player->lock);
 	player->doQuit = true;
 	player->doPause = false;
+	player->pauseStartTime = 0;  /* Clear pause timer */
 	pthread_cond_broadcast (&player->cond);
 	pthread_mutex_unlock (&player->lock);
 	pthread_mutex_lock (&player->aoplayLock);
@@ -487,6 +489,7 @@ BarUiActCallback(BarUiActSkipSong) {
 BarUiActCallback(BarUiActPlay) {
 	pthread_mutex_lock (&app->player.lock);
 	app->player.doPause = false;
+	app->player.pauseStartTime = 0;  /* Clear pause timer */
 	pthread_cond_broadcast (&app->player.cond);
 	pthread_mutex_unlock (&app->player.lock);
 	
@@ -499,6 +502,7 @@ BarUiActCallback(BarUiActPlay) {
 BarUiActCallback(BarUiActPause) {
 	pthread_mutex_lock (&app->player.lock);
 	app->player.doPause = true;
+	app->player.pauseStartTime = time(NULL);  /* Start pause timer */
 	pthread_cond_broadcast (&app->player.cond);
 	pthread_mutex_unlock (&app->player.lock);
 	
@@ -511,6 +515,12 @@ BarUiActCallback(BarUiActPause) {
 BarUiActCallback(BarUiActTogglePause) {
 	pthread_mutex_lock (&app->player.lock);
 	app->player.doPause = !app->player.doPause;
+	/* Update pause timer */
+	if (app->player.doPause) {
+		app->player.pauseStartTime = time(NULL);
+	} else {
+		app->player.pauseStartTime = 0;
+	}
 	pthread_cond_broadcast (&app->player.cond);
 	pthread_mutex_unlock (&app->player.lock);
 	
@@ -655,6 +665,49 @@ BarUiActCallback(BarUiActSelectQuickMix) {
 BarUiActCallback(BarUiActQuit) {
 	app->doQuit = true;
 	BarUiDoSkipSong (&app->player);
+}
+
+/*	Internal stop helper - full reset without quitting
+ *	Stops playback, clears station/playlist, disconnects from Pandora
+ *	@param app application handle
+ *	@param reason "user" for manual stop, "idle_timeout" for pause timeout
+ */
+void BarUiDoPandoraDisconnect(BarApp_t *app, const char *reason) {
+	/* Stop current playback */
+	BarUiDoSkipSong(&app->player);
+	
+	/* Clear playlist and stations */
+	BarStateDrainPlaylist(app);
+	BarStateSetCurrentStation(app, NULL);
+	BarStateSetNextStation(app, NULL);
+	
+	/* Free song history */
+	if (app->songHistory != NULL) {
+		PianoDestroyPlaylist(app->songHistory);
+		app->songHistory = NULL;
+	}
+	
+	/* Disconnect from Pandora (destroys stations, user info, partner) */
+	PianoDestroy(&app->ph);
+	
+	/* Re-initialize for next login */
+	PianoInit(&app->ph, app->settings.partnerUser, app->settings.partnerPassword,
+	          app->settings.device, app->settings.inkey, app->settings.outkey);
+	
+	/* Disconnect all WebSocket clients - they'll reconnect with fresh state */
+	BarWsDisconnectAllClients(app);
+	
+	if (strcmp(reason, "idle_timeout") == 0) {
+		BarUiMsg(&app->settings, MSG_INFO, "Playback stopped due to inactivity.\n");
+	} else {
+		BarUiMsg(&app->settings, MSG_INFO, "Playback stopped, disconnected from Pandora.\n");
+	}
+}
+
+/*	stop - full reset without quitting (UI action wrapper)
+ */
+BarUiActCallback(BarUiActPandoraDisconnect) {
+	BarUiDoPandoraDisconnect(app, "user");
 }
 
 /*	song history
@@ -1037,4 +1090,42 @@ BarUiActCallback(BarUiActManageStation) {
 	}
 
 	PianoDestroyStationInfo (&reqData.info);
+}
+
+/*	pandora reconnect - re-authenticate and fetch stations
+ */
+BarUiActCallback(BarUiActPandoraReconnect) {
+	PianoReturn_t pRet;
+	CURLcode wRet;
+	PianoRequestDataLogin_t reqData;
+	
+	/* Check if credentials are available */
+	if (app->settings.username == NULL || app->settings.password == NULL) {
+		BarUiMsg(&app->settings, MSG_ERR, 
+			"Cannot reconnect: No credentials configured.\n");
+		return;
+	}
+	
+	/* Re-authenticate with Pandora */
+	reqData.user = app->settings.username;
+	reqData.password = app->settings.password;
+	reqData.step = 0;
+	
+	BarUiMsg(&app->settings, MSG_INFO, "Reconnecting to Pandora... ");
+	if (!BarUiPianoCall(app, PIANO_REQUEST_LOGIN, &reqData, &pRet, &wRet)) {
+		BarUiMsg(&app->settings, MSG_ERR, "Failed to reconnect.\n");
+		return;
+	}
+	
+	/* Fetch stations */
+	BarUiMsg(&app->settings, MSG_INFO, "Get stations... ");
+	if (!BarUiPianoCall(app, PIANO_REQUEST_GET_STATIONS, NULL, &pRet, &wRet)) {
+		BarUiMsg(&app->settings, MSG_ERR, "Failed to get stations.\n");
+		return;
+	}
+	
+	/* Broadcast updated stations to WebSocket clients */
+	BarWsBroadcastStations(app);
+	
+	BarUiMsg(&app->settings, MSG_INFO, "Reconnected to Pandora.\n");
 }
