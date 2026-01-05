@@ -62,6 +62,7 @@ THE SOFTWARE.
 #include "debug.h"
 #include "ui.h"
 #include "ui_types.h"
+#include "bar_state.h"  /* For lock assertions */
 
 /* default sample format */
 const enum AVSampleFormat avformat = AV_SAMPLE_FMT_S16;
@@ -600,6 +601,11 @@ void *BarAoPlayThread (void *data) {
 		const double timestamp = (double) filteredFrame->pts * timeBase;
 		const unsigned int songPlayed = timestamp;
 
+		/* CRITICAL RULE: player.lock and player.aoplayLock must NEVER be held simultaneously.
+		 * Audio thread alternates between locks: aoplayLock (buffer) → lock (control).
+		 * See src/THREAD_SAFETY.md for detailed explanation of two-lock player design. */
+		
+		ASSERT_AOPLAY_LOCK_NOT_HELD(player);  /* Verify aoplayLock is free before acquiring lock */
 		pthread_mutex_lock (&player->lock);
 		player->songPlayed = songPlayed;
 		/* pausing */
@@ -613,9 +619,10 @@ void *BarAoPlayThread (void *data) {
 		pthread_mutex_unlock (&player->lock);
 
 		/* lastTimestamp must be the last pts, but expressed in terms of
-		 * st->time_base, not the sink’s time_base. */
+		 * st->time_base, not the sink's time_base. */
 		const int64_t lastTimestamp = timestamp/timeBaseSt;
 		/* notify download thread, we might need more data */
+		ASSERT_PLAYER_LOCK_NOT_HELD(player);  /* Verify lock is free before acquiring aoplayLock */
 		pthread_mutex_lock (&player->aoplayLock);
 		player->lastTimestamp = lastTimestamp;
 		pthread_cond_broadcast (&player->aoplayCond);

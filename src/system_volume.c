@@ -275,17 +275,23 @@ static bool pulseaudioInit(void) {
 	return true;
 }
 
-/* PulseAudio: Get volume (thread-safe) */
+/* PulseAudio: Get volume (thread-safe)
+ * 
+ * Lock optimization: Instead of holding paMutex for entire mainloop iteration,
+ * we only hold it while accessing PA objects. The operation itself completes
+ * asynchronously via callbacks.
+ */
 static int pulseaudioGetVolume(void) {
-	pthread_mutex_lock(&paMutex);
+	pa_operation *op;
 	
+	pthread_mutex_lock(&paMutex);
 	if (!paContext || !paReady) {
 		pthread_mutex_unlock(&paMutex);
 		return -1;
 	}
 	
 	paVolume = -1;
-	pa_operation *op = pa_context_get_sink_info_by_name(
+	op = pa_context_get_sink_info_by_name(
 		paContext, "@DEFAULT_SINK@", paSinkInfoCb, NULL);
 	
 	if (!op) {
@@ -293,21 +299,40 @@ static int pulseaudioGetVolume(void) {
 		return -1;
 	}
 	
-	/* Wait for operation to complete */
-	while (pa_operation_get_state(op) == PA_OPERATION_RUNNING) {
-		pa_mainloop_iterate(paMainloop, 0, NULL);
+	/* Iterate mainloop while holding lock, but with shorter iterations
+	 * to allow other threads access between iterations */
+	int iterations = 0;
+	const int MAX_ITERATIONS = 100;  /* ~1 second timeout */
+	while (pa_operation_get_state(op) == PA_OPERATION_RUNNING && iterations < MAX_ITERATIONS) {
+		pthread_mutex_unlock(&paMutex);
+		usleep(10000);  /* 10ms - allow other threads to run */
+		pthread_mutex_lock(&paMutex);
+		
+		if (paContext && paReady) {
+			pa_mainloop_iterate(paMainloop, 0, NULL);
+		} else {
+			/* Context became invalid, abort */
+			break;
+		}
+		iterations++;
 	}
-	pa_operation_unref(op);
 	
+	pa_operation_unref(op);
 	int result = paVolume;
 	pthread_mutex_unlock(&paMutex);
+	
 	return result;
 }
 
-/* PulseAudio: Set volume (thread-safe) */
+/* PulseAudio: Set volume (thread-safe)
+ * 
+ * Lock optimization: Release lock between mainloop iterations to allow
+ * other threads (volume polling, concurrent set requests) to run.
+ */
 static bool pulseaudioSetVolume(int percent) {
-	pthread_mutex_lock(&paMutex);
+	pa_operation *op;
 	
+	pthread_mutex_lock(&paMutex);
 	if (!paContext || !paReady) {
 		pthread_mutex_unlock(&paMutex);
 		return false;
@@ -316,7 +341,7 @@ static bool pulseaudioSetVolume(int percent) {
 	pa_cvolume cv;
 	pa_cvolume_set(&cv, 2, (pa_volume_t)(percent * PA_VOLUME_NORM / 100));
 	
-	pa_operation *op = pa_context_set_sink_volume_by_name(
+	op = pa_context_set_sink_volume_by_name(
 		paContext, "@DEFAULT_SINK@", &cv, NULL, NULL);
 	
 	if (!op) {
@@ -324,13 +349,26 @@ static bool pulseaudioSetVolume(int percent) {
 		return false;
 	}
 	
-	/* Wait for operation to complete */
-	while (pa_operation_get_state(op) == PA_OPERATION_RUNNING) {
-		pa_mainloop_iterate(paMainloop, 0, NULL);
+	/* Iterate mainloop while releasing lock between iterations */
+	int iterations = 0;
+	const int MAX_ITERATIONS = 100;  /* ~1 second timeout */
+	while (pa_operation_get_state(op) == PA_OPERATION_RUNNING && iterations < MAX_ITERATIONS) {
+		pthread_mutex_unlock(&paMutex);
+		usleep(10000);  /* 10ms - allow other threads to run */
+		pthread_mutex_lock(&paMutex);
+		
+		if (paContext && paReady) {
+			pa_mainloop_iterate(paMainloop, 0, NULL);
+		} else {
+			/* Context became invalid, abort */
+			break;
+		}
+		iterations++;
 	}
-	pa_operation_unref(op);
 	
+	pa_operation_unref(op);
 	pthread_mutex_unlock(&paMutex);
+	
 	return true;
 }
 

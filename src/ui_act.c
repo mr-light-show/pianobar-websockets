@@ -40,6 +40,10 @@ THE SOFTWARE.
 #include "debug.h"
 #include "system_volume.h"
 
+#ifdef WEBSOCKET_ENABLED
+#include "websocket/protocol/socketio.h"
+#endif
+
 /*	standard eventcmd call
  */
 #define BarUiActDefaultEventcmd(name) BarUiStartEventCmd (&app->settings, \
@@ -57,12 +61,19 @@ THE SOFTWARE.
 static inline void BarUiDoSkipSong (player_t * const player) {
 	assert (player != NULL);
 
+	/* CRITICAL RULE: player.lock and player.aoplayLock must NEVER be held simultaneously.
+	 * This function acquires them sequentially to signal both threads.
+	 * See src/THREAD_SAFETY.md for detailed explanation of two-lock player design. */
+	
+	ASSERT_AOPLAY_LOCK_NOT_HELD(player);  /* Verify aoplayLock is free before acquiring lock */
 	pthread_mutex_lock (&player->lock);
 	player->doQuit = true;
 	player->doPause = false;
 	player->pauseStartTime = 0;  /* Clear pause timer */
 	pthread_cond_broadcast (&player->cond);
 	pthread_mutex_unlock (&player->lock);
+	
+	ASSERT_PLAYER_LOCK_NOT_HELD(player);  /* Verify lock is free before acquiring aoplayLock */
 	pthread_mutex_lock (&player->aoplayLock);
 	pthread_cond_broadcast (&player->aoplayCond);
 	pthread_mutex_unlock (&player->aoplayLock);
@@ -321,13 +332,50 @@ BarUiActCallback(BarUiActExplain) {
 	assert (selSong != NULL);
 
 	reqData.song = selSong;
+	reqData.retExplain = NULL; /* Initialize to NULL to avoid freeing garbage */
 
-	BarUiMsg (&app->settings, MSG_INFO, "Receiving explanation... ");
-	if (BarUiActDefaultPianoCall (PIANO_REQUEST_EXPLAIN, &reqData)) {
+	/* Check if this is a WebSocket request (unicast target is set) or CLI request */
+	#ifdef WEBSOCKET_ENABLED
+	bool isWebSocketRequest = (BarSocketIoGetUnicastTarget() != NULL);
+	#else
+	bool isWebSocketRequest = false;
+	#endif
+
+	bool callSuccess;
+
+	if (!isWebSocketRequest) {
+		BarUiMsg (&app->settings, MSG_INFO, "Receiving explanation... ");
+		callSuccess = BarUiActDefaultPianoCall(PIANO_REQUEST_EXPLAIN, &reqData);
+	} else {
+		/* WebSocket request - use silent API call */
+		#ifdef WEBSOCKET_ENABLED
+		char *errorMsg = NULL;
+		callSuccess = BarWsPianoCall(app, PIANO_REQUEST_EXPLAIN, &reqData, &pRet, &wRet, &errorMsg);
+		if (!callSuccess && errorMsg) {
+			BarSocketIoEmitError("song.explain", errorMsg);
+			free(errorMsg);
+		}
+		#else
+		callSuccess = false;
+		#endif
+	}
+
+	if (callSuccess) {
 		if (reqData.retExplain == NULL) {
-			BarUiMsg (&app->settings, MSG_ERR, "No explanation provided.\n");
+			if (!isWebSocketRequest) {
+				BarUiMsg (&app->settings, MSG_ERR, "No explanation provided.\n");
+			}
+			
+			/* Notify WebSocket clients that no explanation was available */
+			#ifdef WEBSOCKET_ENABLED
+			if (isWebSocketRequest) {
+				BarSocketIoEmitError("song.explain", "No explanation provided by Pandora");
+			}
+			#endif
 		} else {
-		BarUiMsg (&app->settings, MSG_INFO, "%s\n", reqData.retExplain);
+		if (!isWebSocketRequest) {
+			BarUiMsg (&app->settings, MSG_INFO, "%s\n", reqData.retExplain);
+		}
 		
 		BarWsBroadcastExplanation(app, reqData.retExplain);
 		
@@ -487,6 +535,11 @@ BarUiActCallback(BarUiActSkipSong) {
 /*	play
  */
 BarUiActCallback(BarUiActPlay) {
+	/* LOCK HIERARCHY: player.lock is Lock #2 in the hierarchy
+	 * PROTECTS: player.doPause, player.pauseStartTime
+	 * DURATION: Held for microseconds (just to set flags)
+	 * BROADCAST: BarWsBroadcastPlayState() called AFTER lock is released
+	 * See src/THREAD_SAFETY.md for details */
 	pthread_mutex_lock (&app->player.lock);
 	app->player.doPause = false;
 	app->player.pauseStartTime = 0;  /* Clear pause timer */
@@ -500,6 +553,9 @@ BarUiActCallback(BarUiActPlay) {
 /*	pause
  */
 BarUiActCallback(BarUiActPause) {
+	/* LOCK HIERARCHY: player.lock is Lock #2 in the hierarchy
+	 * PROTECTS: player.doPause, player.pauseStartTime
+	 * See src/THREAD_SAFETY.md for details */
 	pthread_mutex_lock (&app->player.lock);
 	app->player.doPause = true;
 	app->player.pauseStartTime = time(NULL);  /* Start pause timer */
@@ -513,6 +569,9 @@ BarUiActCallback(BarUiActPause) {
 /*	toggle pause
  */
 BarUiActCallback(BarUiActTogglePause) {
+	/* LOCK HIERARCHY: player.lock is Lock #2 in the hierarchy
+	 * PROTECTS: player.doPause, player.pauseStartTime
+	 * See src/THREAD_SAFETY.md for details */
 	pthread_mutex_lock (&app->player.lock);
 	app->player.doPause = !app->player.doPause;
 	/* Update pause timer */
@@ -587,11 +646,30 @@ BarUiActCallback(BarUiActTempBanSong) {
  */
 BarUiActCallback(BarUiActPrintUpcoming) {
 	PianoSong_t * const nextSong = PianoListNextP (selSong);
+	
+	/* Check if this is a WebSocket request (unicast target is set) or CLI request */
+	#ifdef WEBSOCKET_ENABLED
+	bool isWebSocketRequest = (BarSocketIoGetUnicastTarget() != NULL);
+	#else
+	bool isWebSocketRequest = false;
+	#endif
+	
 	if (nextSong != NULL) {
-		BarUiListSongs (app, nextSong, NULL);
+		if (!isWebSocketRequest) {
+			BarUiListSongs (app, nextSong, NULL);
+		}
 		BarWsBroadcastUpcoming(app, nextSong, 5);
 	} else {
-		BarUiMsg (&app->settings, MSG_INFO, "No songs in queue.\n");
+		if (!isWebSocketRequest) {
+			BarUiMsg (&app->settings, MSG_INFO, "No songs in queue.\n");
+		}
+		
+		/* Notify WebSocket clients that no songs are queued */
+		#ifdef WEBSOCKET_ENABLED
+		if (isWebSocketRequest) {
+			BarSocketIoEmitError("query.upcoming", "No songs in queue");
+		}
+		#endif
 	}
 }
 

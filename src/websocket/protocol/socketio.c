@@ -368,8 +368,17 @@ cleanup:
 /* Global broadcast callback (set by WebSocket core) */
 static void (*g_broadcastCallback)(const char *message, size_t len) = NULL;
 
-/* Unicast target - when set, broadcasts go to this client only */
-static void *g_unicastTarget = NULL;
+/* Thread-local unicast target - each thread has its own value
+ * WebSocket thread: Sets this when handling query actions
+ * CLI thread: Always NULL (never set)
+ * This eliminates race conditions from shared global variable */
+static pthread_key_t g_unicastTargetKey;
+static pthread_once_t g_unicastTargetKeyOnce = PTHREAD_ONCE_INIT;
+
+/* Initialize TLS key (called once) */
+static void init_unicast_target_key(void) {
+	pthread_key_create(&g_unicastTargetKey, NULL);
+}
 
 /* Set broadcast callback */
 void BarSocketIoSetBroadcastCallback(void (*callback)(const char *, size_t)) {
@@ -378,12 +387,14 @@ void BarSocketIoSetBroadcastCallback(void (*callback)(const char *, size_t)) {
 
 /* Set unicast target (NULL for broadcast mode) */
 void BarSocketIoSetUnicastTarget(void *wsi) {
-	g_unicastTarget = wsi;
+	pthread_once(&g_unicastTargetKeyOnce, init_unicast_target_key);
+	pthread_setspecific(g_unicastTargetKey, wsi);
 }
 
 /* Get unicast target (for websocket.c to check) */
 void *BarSocketIoGetUnicastTarget(void) {
-	return g_unicastTarget;
+	pthread_once(&g_unicastTargetKeyOnce, init_unicast_target_key);
+	return pthread_getspecific(g_unicastTargetKey);
 }
 
 /* Format Socket.IO event message */
@@ -656,17 +667,25 @@ void BarSocketIoEmitProcessUnicast(BarApp_t *app, void *wsi) {
 /* Emit 'song.explanation' event (explanation text) */
 void BarSocketIoEmitExplanation(BarApp_t *app, const char *explanation) {
 	json_object *data;
+	char *explanation_copy;
 	
 	if (!app || !explanation) {
 		return;
 	}
 	
+	/* Make a defensive copy since caller may free the original immediately */
+	explanation_copy = strdup(explanation);
+	if (!explanation_copy) {
+		return;
+	}
+	
 	data = json_object_new_object();
 	json_object_object_add(data, "explanation", 
-	                       json_object_new_string(explanation));
+	                       json_object_new_string(explanation_copy));
 	
 	BarSocketIoEmit("song.explanation", data);
 	json_object_put(data);
+	free(explanation_copy);
 }
 
 /* Emit 'error' event (error notification) */
@@ -1637,11 +1656,44 @@ void BarSocketIoHandleAction(BarApp_t *app, const char *action, json_object *dat
 	           action, actionId);
 	
 	/* Set context based on Pandora connection status */
-	BarUiDispatchContext_t context = BAR_DC_GLOBAL | BAR_DC_STATION | BAR_DC_SONG;
+	BarUiDispatchContext_t context = BAR_DC_GLOBAL;
 	if (BarStateIsPandoraConnected(app)) {
 		context |= BAR_DC_PANDORA_CONNECTED;
 	} else {
 		context |= BAR_DC_PANDORA_DISCONNECTED;
+	}
+	
+	/* Add station context if station is selected */
+	PianoStation_t *currentStation = BarStateGetCurrentStation(app);
+	if (currentStation) {
+		context |= BAR_DC_STATION;
+	}
+	
+	/* Add song context if song is playing */
+	PianoSong_t *currentSong = BarStateGetPlaylist(app);
+	if (currentSong) {
+		context |= BAR_DC_SONG;
+	}
+	
+	/* Check if action can be executed in current context */
+	const BarUiDispatchAction_t *dispatcher = BarUiDispatchLookupById(actionId);
+	if (dispatcher && (dispatcher->context & context) != dispatcher->context) {
+		/* Action requirements not met - send error to client */
+		const char *errorMsg = NULL;
+		if ((dispatcher->context & BAR_DC_SONG) && !currentSong) {
+			errorMsg = "No song is currently playing";
+		} else if ((dispatcher->context & BAR_DC_STATION) && !currentStation) {
+			errorMsg = "No station is selected";
+		} else if ((dispatcher->context & BAR_DC_PANDORA_CONNECTED) && 
+		           !(context & BAR_DC_PANDORA_CONNECTED)) {
+			errorMsg = "Not connected to Pandora";
+		} else {
+			errorMsg = "Action cannot be performed in current context";
+		}
+		
+		debugPrint(DEBUG_WEBSOCKET, "Socket.IO: Action '%s' failed: %s\n", action, errorMsg);
+		BarSocketIoEmitError(action, errorMsg);
+		return;
 	}
 
 	/* For query actions (explain, upcoming), set unicast target so response
@@ -1651,9 +1703,16 @@ void BarSocketIoHandleAction(BarApp_t *app, const char *action, json_object *dat
 		BarSocketIoSetUnicastTarget(wsi);
 	}
 	
-	/* Execute action directly by ID in WebSocket thread */
-	BarUiDispatchById(app, actionId, BarStateGetCurrentStation(app), 
-	                  BarStateGetPlaylist(app), false, context);
+	/* Execute action directly by ID in WebSocket thread
+	 * 
+	 * THREAD SAFETY: This call may trigger state lock acquisition via:
+	 * - BarStateGetCurrentStation() acquires/releases stateMutex
+	 * - BarStateGetPlaylist() acquires/releases stateMutex
+	 * - Action callbacks may acquire player.lock (e.g., BarUiActPlay)
+	 * 
+	 * Lock ordering is safe: stateMutex (if needed) → player.lock (if needed)
+	 * See src/THREAD_SAFETY.md for details */
+	BarUiDispatchById(app, actionId, currentStation, currentSong, false, context);
 	
 	/* Clear unicast target after query actions */
 	if (useUnicast) {
@@ -1668,17 +1727,9 @@ void BarSocketIoHandleAction(BarApp_t *app, const char *action, json_object *dat
 		}
 	}
 	
-	/* Broadcast state changes for playback control */
-	if (actionId == BAR_KS_PLAY || actionId == BAR_KS_PAUSE || actionId == BAR_KS_PLAYPAUSE) {
-		/* Create state change event with just paused status */
-		json_object *stateData = json_object_new_object();
-		pthread_mutex_lock(&app->player.lock);
-		json_object_object_add(stateData, "paused", 
-		                       json_object_new_boolean(app->player.doPause));
-		pthread_mutex_unlock(&app->player.lock);
-		BarSocketIoEmit("playState", stateData);
-		json_object_put(stateData);
-	}
+	/* Note: Play/pause/toggle actions already broadcast state via BarWsBroadcastPlayState()
+	 * in their respective action callbacks (BarUiActPlay/Pause/TogglePause in ui_act.c).
+	 * No need to duplicate the broadcast here - it would cause redundant lock acquisition. */
 }
 
 /* Handle 'changeStation' event from client */

@@ -31,6 +31,15 @@ THE SOFTWARE.
 #include <stdarg.h>
 
 /*	Lock state mutex with logging (only in BOTH mode when WebSocket enabled)
+ *
+ *	LOCK HIERARCHY: This is Lock #1 in the hierarchy
+ *	Must be acquired BEFORE player.lock if both are needed
+ *	
+ *	PROTECTS: Pandora state (stations, playlist, curStation, nextStation, ph)
+ *	DURATION: Should be held for microseconds, not milliseconds
+ *	NO I/O: Never hold this lock during network calls, disk I/O, or console output
+ *	
+ *	See src/THREAD_SAFETY.md for complete documentation
  */
 static void state_mutex_lock_internal(const BarApp_t *app, const char *operation) {
 	#ifdef WEBSOCKET_ENABLED
@@ -290,6 +299,31 @@ bool BarStateGetPlayerPaused(const BarApp_t *app) {
 }
 
 /*	Make Pandora API call (thread-safe)
+ *	
+ *	IMPORTANT: This function holds stateMutex during network I/O.
+ *	This is the ONE documented exception to the "no I/O under lock" rule.
+ *	
+ *	Why this is necessary:
+ *	- BarUiPianoCall() performs: prepare → network → parse → modify state
+ *	- The parse step (PianoResponse) directly modifies app->ph.stations,
+ *	  app->ph.genreStations, and other Pandora state structures
+ *	- These modifications must be atomic - we cannot allow other threads
+ *	  to observe partially-updated state (e.g., playlist with some songs
+ *	  from old request, some from new request)
+ *	
+ *	Performance impact:
+ *	- Lock hold time: 100-500ms (typical Pandora API latency)
+ *	- Call frequency: Low (startup, every ~30min, user actions)
+ *	- Affected threads: WebSocket and CLI threads briefly blocked
+ *	- Tradeoff: We accept brief blocking to guarantee state consistency
+ *	
+ *	Alternative considered but rejected:
+ *	- Unlock → network call → lock → apply response
+ *	- Requires deep refactoring of libpiano to support copy-on-write
+ *	- Complex merge logic prone to race conditions and bugs
+ *	- Cost/benefit analysis: not worth the implementation complexity
+ *	
+ *	See src/THREAD_SAFETY.md for complete documentation
  */
 bool BarStateCallPandora(BarApp_t *app, PianoRequestType_t type,
                          void *data, PianoReturn_t *pRet, CURLcode *wRet) {
