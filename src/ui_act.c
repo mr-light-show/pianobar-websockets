@@ -40,6 +40,10 @@ THE SOFTWARE.
 #include "debug.h"
 #include "system_volume.h"
 
+#ifdef WEBSOCKET_ENABLED
+#include "websocket/protocol/socketio.h"
+#endif
+
 /*	standard eventcmd call
  */
 #define BarUiActDefaultEventcmd(name) BarUiStartEventCmd (&app->settings, \
@@ -330,12 +334,32 @@ BarUiActCallback(BarUiActExplain) {
 	reqData.song = selSong;
 	reqData.retExplain = NULL; /* Initialize to NULL to avoid freeing garbage */
 
-	BarUiMsg (&app->settings, MSG_INFO, "Receiving explanation... ");
+	/* Check if this is a WebSocket request (unicast target is set) or CLI request */
+	#ifdef WEBSOCKET_ENABLED
+	bool isWebSocketRequest = (BarSocketIoGetUnicastTarget() != NULL);
+	#else
+	bool isWebSocketRequest = false;
+	#endif
+
+	if (!isWebSocketRequest) {
+		BarUiMsg (&app->settings, MSG_INFO, "Receiving explanation... ");
+	}
 	if (BarUiActDefaultPianoCall (PIANO_REQUEST_EXPLAIN, &reqData)) {
 		if (reqData.retExplain == NULL) {
-			BarUiMsg (&app->settings, MSG_ERR, "No explanation provided.\n");
+			if (!isWebSocketRequest) {
+				BarUiMsg (&app->settings, MSG_ERR, "No explanation provided.\n");
+			}
+			
+			/* Notify WebSocket clients that no explanation was available */
+			#ifdef WEBSOCKET_ENABLED
+			if (isWebSocketRequest) {
+				BarSocketIoEmitError("song.explain", "No explanation provided by Pandora");
+			}
+			#endif
 		} else {
-		BarUiMsg (&app->settings, MSG_INFO, "%s\n", reqData.retExplain);
+		if (!isWebSocketRequest) {
+			BarUiMsg (&app->settings, MSG_INFO, "%s\n", reqData.retExplain);
+		}
 		
 		BarWsBroadcastExplanation(app, reqData.retExplain);
 		
@@ -606,11 +630,30 @@ BarUiActCallback(BarUiActTempBanSong) {
  */
 BarUiActCallback(BarUiActPrintUpcoming) {
 	PianoSong_t * const nextSong = PianoListNextP (selSong);
+	
+	/* Check if this is a WebSocket request (unicast target is set) or CLI request */
+	#ifdef WEBSOCKET_ENABLED
+	bool isWebSocketRequest = (BarSocketIoGetUnicastTarget() != NULL);
+	#else
+	bool isWebSocketRequest = false;
+	#endif
+	
 	if (nextSong != NULL) {
-		BarUiListSongs (app, nextSong, NULL);
+		if (!isWebSocketRequest) {
+			BarUiListSongs (app, nextSong, NULL);
+		}
 		BarWsBroadcastUpcoming(app, nextSong, 5);
 	} else {
-		BarUiMsg (&app->settings, MSG_INFO, "No songs in queue.\n");
+		if (!isWebSocketRequest) {
+			BarUiMsg (&app->settings, MSG_INFO, "No songs in queue.\n");
+		}
+		
+		/* Notify WebSocket clients that no songs are queued */
+		#ifdef WEBSOCKET_ENABLED
+		if (isWebSocketRequest) {
+			BarSocketIoEmitError("query.upcoming", "No songs in queue");
+		}
+		#endif
 	}
 }
 
