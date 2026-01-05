@@ -96,12 +96,36 @@ THE SOFTWARE.
 		} \
 	} while (0)
 
+/* Assert that player.aoplayLock is currently held */
+#define ASSERT_AOPLAY_LOCK_HELD(player) \
+	do { \
+		int _trylock_result = pthread_mutex_trylock(&(player)->aoplayLock); \
+		if (_trylock_result == 0) { \
+			pthread_mutex_unlock(&(player)->aoplayLock); \
+			assert(0 && "aoplayLock is NOT held (expected to be held)"); \
+		} else { \
+			assert(_trylock_result == EBUSY && "aoplayLock should be held"); \
+		} \
+	} while (0)
+
+/* Assert that player.aoplayLock is NOT currently held */
+#define ASSERT_AOPLAY_LOCK_NOT_HELD(player) \
+	do { \
+		int _trylock_result = pthread_mutex_trylock(&(player)->aoplayLock); \
+		assert(_trylock_result == 0 && "aoplayLock is held (expected to be free)"); \
+		if (_trylock_result == 0) { \
+			pthread_mutex_unlock(&(player)->aoplayLock); \
+		} \
+	} while (0)
+
 #else
 /* Release builds: assertions are no-ops */
 #define ASSERT_STATE_LOCK_HELD(app) ((void)0)
 #define ASSERT_STATE_LOCK_NOT_HELD(app) ((void)0)
 #define ASSERT_PLAYER_LOCK_HELD(player) ((void)0)
 #define ASSERT_PLAYER_LOCK_NOT_HELD(player) ((void)0)
+#define ASSERT_AOPLAY_LOCK_HELD(player) ((void)0)
+#define ASSERT_AOPLAY_LOCK_NOT_HELD(player) ((void)0)
 #endif
 
 /* Initialize/destroy state mutex */

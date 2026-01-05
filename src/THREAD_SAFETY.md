@@ -49,15 +49,67 @@ Pianobar supports two UI modes:
 
 ### Three Independent Locks
 
-Pianobar uses **three independent locks** that protect different data:
+Pianobar uses **multiple independent locks** that protect different data:
 
 | Lock | Purpose | Scope | File |
 |------|---------|-------|------|
 | `app->stateMutex` | Protects Pandora state (stations, playlist, curStation, nextStation) | Only in `BAR_UI_MODE_BOTH` | [`bar_state.c`](bar_state.c) |
-| `app->player.lock` | Protects player state (doPause, songPlayed, songDuration, mode) | Always active | [`player.c`](player.c) |
+| `app->player.lock` | Protects player control (doPause, songPlayed, songDuration, mode) | Always active | [`player.c`](player.c) |
+| `app->player.aoplayLock` | Protects audio buffer (fabuf, lastTimestamp, aoplayCond) | Always active | [`player.c`](player.c) |
 | libwebsockets internal | Protects WebSocket connection state | Managed by libwebsockets | N/A |
 
 **Key Design Principle:** These locks are **independent** and protect **non-overlapping data**. This minimizes lock contention and simplifies reasoning about deadlocks.
+
+### Player Lock Architecture
+
+The player uses **two separate locks** for different concerns:
+
+**Threading Model:**
+- **Decoder thread** (`BarPlayerThread`): Reads network stream, decodes audio, writes to buffer
+- **Audio output thread** (`BarAoPlayThread`): Reads buffer, plays audio, updates progress
+
+**Lock Responsibilities:**
+
+| Lock | Purpose | Access Pattern | Hold Time |
+|------|---------|----------------|-----------|
+| `player.lock` | Control plane (pause/skip/progress) | Low freq (~1/sec) | ~1µs |
+| `player.aoplayLock` | Data plane (audio buffer coordination) | High freq (~100/sec) | ~10µs |
+
+**Why Two Locks?**
+
+1. **Minimize Contention**: Audio pipeline runs at ~44.1kHz sample rate. Keeping buffer lock separate means user actions (pause/skip) don't block audio processing.
+
+2. **Lock Ordering Safety**: Threads acquire locks sequentially, never holding both simultaneously.
+
+3. **Clear Separation of Concerns**:
+   - `player.lock` = "what should the player do?" (control plane)
+   - `player.aoplayLock` = "where is the audio data?" (data plane)
+
+**CRITICAL RULE: These locks must NEVER be held simultaneously.**
+
+**Example from audio thread** ([`player.c`](player.c)):
+```c
+// Read from buffer (aoplayLock held)
+pthread_mutex_lock(&player->aoplayLock);
+av_buffersink_get_frame(player->fbufsink, frame);
+pthread_mutex_unlock(&player->aoplayLock);
+
+// Play audio (no locks held)
+ao_play(player->aoDev, data, size);
+
+// Update progress (lock held)  
+pthread_mutex_lock(&player->lock);
+player->songPlayed = timestamp;
+if (player->doPause) { /* wait */ }
+pthread_mutex_unlock(&player->lock);
+
+// Update timestamp (aoplayLock held)
+pthread_mutex_lock(&player->aoplayLock);
+player->lastTimestamp = timestamp;
+pthread_mutex_unlock(&player->aoplayLock);
+```
+
+**Assertions:** In DEBUG builds, attempting to acquire one while holding the other will trigger assert-fail. See `ASSERT_PLAYER_LOCK_NOT_HELD()` and `ASSERT_AOPLAY_LOCK_NOT_HELD()` in [`bar_state.h`](bar_state.h).
 
 ---
 
@@ -78,9 +130,24 @@ When multiple locks must be acquired, **always follow this order**:
 ### Lock Duration Guidelines
 
 - **Minimize lock duration**: Hold locks for the shortest time possible
-- **No I/O under lock**: Never make network calls, read files, or print to console while holding a lock
+- **No I/O under lock**: Never make network calls, read files, or print to console while holding a lock (see exception below)
 - **No allocations under lock**: Avoid `malloc`/`free` while holding locks (use stack buffers or pre-allocate)
 - **No nested locks**: Prefer releasing one lock before acquiring another
+
+**Exception: `BarStateCallPandora()`**
+
+There is ONE documented exception to the "no I/O under lock" rule: `BarStateCallPandora()` in [`bar_state.c`](bar_state.c).
+
+This function holds `stateMutex` during network I/O (100-500ms) because:
+1. The libpiano library's `PianoResponse()` directly modifies `app->ph.stations` and other shared state structures
+2. These modifications must be atomic - no partial updates can be visible to other threads
+3. Alternative approaches (copy-on-write, delta merging) would require extensive refactoring with high bug risk
+
+**Rationale for accepting this exception:**
+- Pandora API calls are infrequent (startup, every ~30 minutes, user actions)
+- Lock hold time (100-500ms) is acceptable given low call frequency
+- Consistency guarantee outweighs brief thread blocking
+- See detailed analysis in function comment in [`bar_state.c`](bar_state.c) lines 301-328
 
 ### Conditional Locking
 
