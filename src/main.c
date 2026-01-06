@@ -93,6 +93,15 @@ static bool BarMainGetLoginCredentials (BarSettings_t *settings,
 	bool usernameFromConfig = true;
 
 	if (settings->username == NULL) {
+		/* In web-only mode, stdin is not available - credentials must be in config */
+		#ifdef WEBSOCKET_ENABLED
+		if (settings->uiMode == BAR_UI_MODE_WEB) {
+			BarUiMsg (settings, MSG_ERR, "Error: Username not found in config file. "
+					"In web-only mode, credentials must be provided in the config.\n");
+			return false;
+		}
+		#endif
+		
 		char nameBuf[100];
 
 		BarUiMsg (settings, MSG_QUESTION, "Email: ");
@@ -104,6 +113,15 @@ static bool BarMainGetLoginCredentials (BarSettings_t *settings,
 	}
 
 	if (settings->password == NULL) {
+		/* In web-only mode, stdin is not available - credentials must be in config */
+		#ifdef WEBSOCKET_ENABLED
+		if (settings->uiMode == BAR_UI_MODE_WEB) {
+			BarUiMsg (settings, MSG_ERR, "Error: Password not found in config file. "
+					"In web-only mode, credentials must be provided in the config.\n");
+			return false;
+		}
+		#endif
+		
 		char passBuf[100];
 
 		if (usernameFromConfig) {
@@ -543,7 +561,14 @@ int main (int argc, char **argv) {
 	BarSettingsInit (&app.settings);
 	BarSettingsRead (&app.settings);
 
-	/* Initialize system volume control if configured */
+	/* Daemonize EARLY if running in web-only mode - before any terminal/stdin setup 
+	 * System volume init must come AFTER daemonization since it may access system resources */
+	if (!BarWsDaemonize(&app)) {
+		fprintf(stderr, "Failed to daemonize\n");
+		return 1;
+	}
+
+	/* Initialize system volume control if configured - AFTER daemonization */
 	if (app.settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
 		if (BarSystemVolumeInit()) {
 			/* In system mode, keep player volume at 0dB (neutral).
@@ -555,12 +580,6 @@ int main (int argc, char **argv) {
 			fprintf(stderr, "Warning: System volume control unavailable, falling back to player volume\n");
 			app.settings.volumeMode = BAR_VOLUME_MODE_PLAYER;
 		}
-	}
-
-	/* Daemonize EARLY if running in web-only mode - before any terminal/stdin setup */
-	if (!BarWsDaemonize(&app)) {
-		fprintf(stderr, "Failed to daemonize\n");
-		return 1;
 	}
 
 	/* save terminal attributes, before disabling echoing */
