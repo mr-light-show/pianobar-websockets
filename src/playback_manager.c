@@ -36,11 +36,10 @@ THE SOFTWARE.
 #include "debug.h"
 #include "websocket_bridge.h"
 
-#include <unistd.h>
 #include <assert.h>
-#include <signal.h>
 #include <time.h>
 #include <errno.h>
+#include <sys/time.h>
 
 /* Forward declarations of functions from main.c */
 extern void BarMainGetPlaylist(BarApp_t *app);
@@ -118,7 +117,9 @@ static void PlaybackManagerPlayerCleanup(BarApp_t *app, pthread_t *playerThread)
 	/* In WebSocket mode, interrupted may be temporarily changed by readline */
 	interrupted = &app->doQuit;
 
+	pthread_mutex_lock(&app->player.lock);
 	app->player.mode = PLAYER_DEAD;
+	pthread_mutex_unlock(&app->player.lock);
 }
 
 /*	Playback manager thread - runs the playback state machine
@@ -131,7 +132,18 @@ static void *BarPlaybackManagerThread(void *data) {
 	debugPrint(DEBUG_UI, "PlaybackMgr: Thread started\n");
 	
 	while (!app->doQuit && g_running) {
-		BarPlayerMode mode = BarPlayerGetMode(&app->player);
+		/* Use timed wait instead of polling - wake up on mode changes or after 1 second */
+		struct timespec timeout;
+		clock_gettime(CLOCK_REALTIME, &timeout);
+		timeout.tv_sec += 1;  /* 1 second timeout for progress broadcast */
+		
+		pthread_mutex_lock(&app->player.lock);
+		/* Wait for mode change or timeout (whichever comes first) */
+		pthread_cond_timedwait(&app->player.cond, &app->player.lock, &timeout);
+		/* Cache mode and pause state while holding lock */
+		BarPlayerMode mode = app->player.mode;
+		bool isPaused = app->player.doPause;
+		pthread_mutex_unlock(&app->player.lock);
 		
 		/* Broadcast progress updates every ~1 second while playing (and not paused) */
 		{
@@ -140,10 +152,6 @@ static void *BarPlaybackManagerThread(void *data) {
 				lastProgressBroadcast = now;
 				
 				/* Check if playing AND not paused */
-				pthread_mutex_lock(&app->player.lock);
-				bool isPaused = app->player.doPause;
-				pthread_mutex_unlock(&app->player.lock);
-				
 				if (mode == PLAYER_PLAYING && !isPaused) {
 					BarWsBroadcastProgress(app);
 				}
@@ -152,10 +160,13 @@ static void *BarPlaybackManagerThread(void *data) {
 		
 		/* Check for pause timeout (auto-stop after configured minutes of pause) */
 		if (app->settings.pauseTimeout > 0) {
-			pthread_mutex_lock(&app->player.lock);
-			bool isPaused = app->player.doPause;
-			time_t pauseStart = app->player.pauseStartTime;
-			pthread_mutex_unlock(&app->player.lock);
+			/* Only need to check pauseStartTime if actually paused */
+			time_t pauseStart = 0;
+			if (isPaused) {
+				pthread_mutex_lock(&app->player.lock);
+				pauseStart = app->player.pauseStartTime;
+				pthread_mutex_unlock(&app->player.lock);
+			}
 			
 			if (isPaused && pauseStart > 0) {
 				time_t elapsed = time(NULL) - pauseStart;
@@ -218,9 +229,6 @@ static void *BarPlaybackManagerThread(void *data) {
 				BarWsBroadcastSongStart(app);
 			}
 		}
-		
-		/* Sleep briefly to avoid busy-wait */
-		usleep(100000);  // 100ms
 	}
 	
 	/* Cleanup if player still running */

@@ -73,10 +73,10 @@ static inline void BarUiDoSkipSong (player_t * const player) {
 	pthread_cond_broadcast (&player->cond);
 	pthread_mutex_unlock (&player->lock);
 	
-	ASSERT_PLAYER_LOCK_NOT_HELD(player);  /* Verify lock is free before acquiring aoplayLock */
-	pthread_mutex_lock (&player->aoplayLock);
-	pthread_cond_broadcast (&player->aoplayCond);
-	pthread_mutex_unlock (&player->aoplayLock);
+	ASSERT_PLAYER_LOCK_NOT_HELD(player);  /* Verify lock is free before acquiring decoderLock */
+	pthread_mutex_lock (&player->decoderLock);
+	pthread_cond_broadcast (&player->decoderCond);
+	pthread_mutex_unlock (&player->decoderLock);
 }
 
 /*	transform station if necessary to allow changes like rename, rate, ...
@@ -892,9 +892,8 @@ BarUiActCallback(BarUiActVolUp) {
 BarUiActCallback(BarUiActVolReset) {
 	if (app->settings.volumeMode == BAR_VOLUME_MODE_SYSTEM) {
 		BarSystemVolumeSet(50);  /* Reset to 50% for system volume */
-		/* Don't modify settings.volume - it stays at 0dB for player */
 	} else {
-		app->settings.volume = 0;
+		app->settings.volume = 50;  /* Reset to 50% (linear 0-100 scale) */
 		BarPlayerSetVolume (&app->player);
 	}
 	BarWsBroadcastVolume(app);
